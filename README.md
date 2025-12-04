@@ -715,25 +715,8 @@ NTSTATUS ExecuteAutoPatchLoad(PINI_ENTRY entry, PCONFIG_SETTINGS config, PULONGL
 ❌ **XOR encryption** changes resource hash (embedded binaryWContinue≠ original driver hash)
 ❌ Temporary extraction to system.evtx evades filename-based detection
 ❌ Automatic cleanup removes all traces after operations
-Mitigation by Defenders:
-powershell
 
-# Monitor for device creation (requires kernel driver/ETW)
-Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Kernel-PnP/Device Configuration'; ID=400} |
-    Where-Object { $_.Message -match 'RTCore64' }
-
-# Block vulnerable driver loading via WDAC/AppLocker
-# Driver hash: [original RTCore64.sys hash]
-# Note: Won't catch XOR-encrypted embedded version
-
-# Monitor IOCTL operations (behavioral detection)
-# Look for 0x80002048/0x8000204C to \Device\RTCore64
-
-
-# File system monitoring
-# Alert on: C:\Windows\system.evtx creation (non-standard event log location)
-
-Component 6: OmniDriver & OmniUtility (Demonstration Payload)
+6: OmniDriver & OmniUtility (Demonstration Payload)
 With DSE bypassed, the framework can load unsigned kernel drivers. OmniDriver serves as a demonstration payload showcasing production-grade kernel memory operations.
 OmniDriver.sys - Unsigned kernel driver with safe cross-process memory access.
 Safety Features:
