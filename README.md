@@ -1372,11 +1372,15 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-🔍 Appendix: Detection & Defense
-For Security Researchers & Defenders:
-Detection Strategies
-1. Static Analysis (Limited Effectiveness):
-powershell# String scanning (ineffective due to assembly obfuscation)
+## 🔍 Appendix: Detection & Defense
+
+**For Security Researchers & Defenders:**
+
+### Detection Strategies
+
+**1. Static Analysis (Limited Effectiveness):**
+```powershell
+# String scanning (ineffective due to assembly obfuscation)
 strings BootBypass.exe | Select-String "RTCore64"  # Returns nothing
 
 # Hash-based detection (ineffective - XOR changes resource hash)
@@ -1385,8 +1389,11 @@ Get-FileHash BootBypass.exe -Algorithm SHA256
 
 # PE resource analysis (may detect XOR-encrypted resource)
 # Look for resources with high entropy (encrypted data)
-2. Behavioral Detection (Effective):
-powershell# Monitor BootExecute registry modifications
+```
+
+**2. Behavioral Detection (Effective):**
+```powershell
+# Monitor BootExecute registry modifications
 Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name BootExecute |
     Where-Object { $_.BootExecute -contains "BootBypass" }
 
@@ -1405,8 +1412,11 @@ Get-WinEvent -FilterHashtable @{
 
 # Monitor suspicious file creations
 # Alert on: C:\Windows\system.evtx creation (non-standard event log location)
-3. Kernel-Mode Detection (Most Effective):
-c// ETW provider for SeCiCallbacks monitoring
+```
+
+**3. Kernel-Mode Detection (Most Effective):**
+```c
+// ETW provider for SeCiCallbacks monitoring
 // Alert when callback pointer changes
 
 PVOID g_OriginalCallback = NULL;
@@ -1437,32 +1447,37 @@ NTSTATUS MonitorDSECallback(VOID) {
     
     return STATUS_SUCCESS;
 }
-4. IOCTL Monitoring:
-c// IRP_MJ_DEVICE_CONTROL hook for vulnerable driver detection
+```
+
+**4. IOCTL Monitoring:**
+```c
+// IRP_MJ_DEVICE_CONTROL hook for vulnerable driver detection
 // Monitor for RTCore64-specific IOCTLs
 
 NTSTATUS DeviceControlHook(PDEVICE_OBJECT DeviceObject, PIRP Irp) {
-    PIO_STACK_LOCATION irpSp = IoGetWContinueCurrentIrpStackLocation(Irp);
-ULONG ioctl = irpSp->Parameters.DeviceIoControl.IoControlCode;
-// Detect RTCore64 IOCTLs
-if (ioctl == 0x80002048 || ioctl == 0x8000204C) {
-    // ALERT: Vulnerable driver IOCTL detected!
-    UNICODE_STRING deviceName;
-    RtlInitUnicodeString(&deviceName, L"\\Device\\RTCore64");
+    PIO_STACK_LOCATION irpSp = IoGetCurrentIrpStackLocation(Irp);
+    ULONG ioctl = irpSp->Parameters.DeviceIoControl.IoControlCode;
     
-    if (RtlEqualUnicodeString(&DeviceObject->Name, &deviceName, TRUE)) {
-        LogSecurityEvent("VULNERABLE_DRIVER_IOCTL", ioctl);
+    // Detect RTCore64 IOCTLs
+    if (ioctl == 0x80002048 || ioctl == 0x8000204C) {
+        // ALERT: Vulnerable driver IOCTL detected!
+        UNICODE_STRING deviceName;
+        RtlInitUnicodeString(&deviceName, L"\\Device\\RTCore64");
         
-        // Optional: Block operation
-        Irp->IoStatus.Status = STATUS_ACCESS_DENIED;
-        IoCompleteRequest(Irp, IO_NO_INCREMENT);
-        return STATUS_ACCESS_DENIED;
+        if (RtlEqualUnicodeString(&DeviceObject->Name, &deviceName, TRUE)) {
+            LogSecurityEvent("VULNERABLE_DRIVER_IOCTL", ioctl);
+            
+            // Optional: Block operation
+            Irp->IoStatus.Status = STATUS_ACCESS_DENIED;
+            IoCompleteRequest(Irp, IO_NO_INCREMENT);
+            return STATUS_ACCESS_DENIED;
+        }
     }
+    
+    // Call original handler
+    return OriginalDeviceControl(DeviceObject, Irp);
 }
-
-// Call original handler
-return OriginalDeviceControl(DeviceObject, Irp);
-}
+```
 
 ### Mitigation Strategies
 
