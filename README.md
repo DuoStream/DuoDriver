@@ -716,7 +716,9 @@ NTSTATUS ExecuteAutoPatchLoad(PINI_ENTRY entry, PCONFIG_SETTINGS config, PULONGL
 ❌ Temporary extraction to system.evtx evades filename-based detection
 ❌ Automatic cleanup removes all traces after operations
 Mitigation by Defenders:
-powershell# Monitor for device creation (requires kernel driver/ETW)
+powershell
+
+# Monitor for device creation (requires kernel driver/ETW)
 Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Kernel-PnP/Device Configuration'; ID=400} |
     Where-Object { $_.Message -match 'RTCore64' }
 
@@ -726,6 +728,7 @@ Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Kernel-PnP/Device Con
 
 # Monitor IOCTL operations (behavioral detection)
 # Look for 0x80002048/0x8000204C to \Device\RTCore64
+
 
 # File system monitoring
 # Alert on: C:\Windows\system.evtx creation (non-standard event log location)
