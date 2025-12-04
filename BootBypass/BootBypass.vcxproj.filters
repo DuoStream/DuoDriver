@@ -15,7 +15,22 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="BootBypass.c">
+    <ClCompile Include="BootManager.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SystemUtils.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="DriverManager.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SecurityPatcher.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="SetupManager.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>	
+    <ClCompile Include="FileManager.c">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -26,6 +41,29 @@
     <ClInclude Include="resource.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="SystemUtils.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DriverManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="SecurityPatcher.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+	<ClInclude Include="SetupManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="FileManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="BootManager.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="MmPoolTelemetry.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="BootBypass.rc">

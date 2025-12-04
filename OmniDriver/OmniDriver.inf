@@ -18,7 +18,7 @@ DefaultDestDir = 13
 1 = %DiskName%,,,""
 
 [SourceDisksFiles]
-OmniDriver.sys = 1,,
+OmniDriver.sys  = 1,,
 
 ;*****************************************
 ; Install Section

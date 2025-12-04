@@ -6,9 +6,25 @@
       <Platform>x64</Platform>
     </ProjectConfiguration>
   </ItemGroup>
+  <ItemGroup>
+    <None Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="OmniDriver.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="OmniDriver.h" />
+    <ClInclude Include="resource.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="OmniDriver.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Inf Include="OmniDriver.inf" />
+  </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{974D7ADC-D2D9-9045-9143-FDCF1C10E874}</ProjectGuid>
-    <TemplateGuid>{1bc93793-694f-48fe-9372-81e2b05556fd}</TemplateGuid>
+    <TemplateGuid>{497e31cb-056b-4f31-abb8-447fd55ee5a5}</TemplateGuid>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
     <Configuration>Debug</Configuration>
@@ -21,7 +37,7 @@
     <UseDebugLibraries>false</UseDebugLibraries>
     <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
     <ConfigurationType>Driver</ConfigurationType>
-    <DriverType>WDM</DriverType>
+    <DriverType>KMDF</DriverType>
     <DriverTargetPlatform>Universal</DriverTargetPlatform>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
@@ -32,35 +48,24 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros" />
   <PropertyGroup />
-  
-  <!-- DODAJ TE PROPERTYGROUP -->
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <DebuggerFlavor>DbgengKernelDebugger</DebuggerFlavor>
+    <ExecutablePath>$(ExecutablePath);$(WDKBinRoot_x86);$(WDKContentRoot)tools\$(WDKBuildFolder)\tracing\x64</ExecutablePath>
+    <IncludePath>$(IncludePath);$(KMDF_INC_PATH)$(KMDF_VER_PATH)</IncludePath>
+    <LibraryPath>$(DDK_LibraryPath_DDKPlatform);$(LibraryPath)</LibraryPath>
     <Inf2CatUseLocalTime>true</Inf2CatUseLocalTime>
-    <OutDir>$(SolutionDir)bin\x64\Release\</OutDir>
-    <IntDir>$(SolutionDir)obj\$(ProjectName)\$(Configuration)\$(Platform)\</IntDir>
-    <TargetName>OmniDriver</TargetName>
+    <DriverProductionSignMinimalRebuildFromTracking>true</DriverProductionSignMinimalRebuildFromTracking>
   </PropertyGroup>
-  
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+    </ClCompile>
     <DriverSign>
       <FileDigestAlgorithm>sha256</FileDigestAlgorithm>
     </DriverSign>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <Inf Include="OmniDriver.inf" />
-  </ItemGroup>
-  <ItemGroup>
     <FilesToPackage Include="$(TargetPath)" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="OmniDriver.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="OmniDriver.h" />
-  </ItemGroup>
-  <ItemGroup>
-    <ResourceCompile Include="OmniDriver.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -17,12 +17,13 @@
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
     <ConfigurationType>Application</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>v143</PlatformToolset>
+    <PlatformToolset>v145</PlatformToolset>
     <WholeProgramOptimization>false</WholeProgramOptimization>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.props" />
   </ImportGroup>
   <ImportGroup Label="Shared">
   </ImportGroup>
@@ -60,21 +61,36 @@
       <GenerateManifest>false</GenerateManifest>
       <LinkTimeCodeGeneration>Default</LinkTimeCodeGeneration>
     </Link>
-	<PostBuildEvent>
+    <PostBuildEvent>
       <Command>powershell -Command "&amp; {$f='$(OutDir)$(TargetName)$(TargetExt)'; (Get-Item $f).CreationTime='2026-01-01 00:00:00'; (Get-Item $f).LastWriteTime='2026-01-01 00:00:00'}"</Command>
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="BootBypass.c" />
+    <ClCompile Include="BootManager.c" />
+	<ClCompile Include="DriverManager.c" />
+    <ClCompile Include="FileManager.c" />
+    <ClCompile Include="SecurityPatcher.c" />
+    <ClCompile Include="SetupManager.c" />
+	<ClCompile Include="SystemUtils.c" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="BootBypass.h" />
+    <ClInclude Include="BootManager.h" />
+    <ClInclude Include="DriverManager.h" />
+    <ClInclude Include="FileManager.h" />
     <ClInclude Include="resource.h" />
+    <ClInclude Include="SecurityPatcher.h" />
+	<ClInclude Include="SetupManager.h" />
+    <ClInclude Include="SystemUtils.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <MASM Include="MmPoolTelemetry.asm" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="BootBypass.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
+    <Import Project="$(VCTargetsPath)\BuildCustomizations\masm.targets" />
   </ImportGroup>
 </Project>

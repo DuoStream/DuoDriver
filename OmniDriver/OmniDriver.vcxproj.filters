@@ -19,19 +19,25 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
+    <None Include="ReadMe.txt" />
+  </ItemGroup>
+  <ItemGroup>
     <Inf Include="OmniDriver.inf">
       <Filter>Driver Files</Filter>
     </Inf>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="OmniDriver.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-  </ItemGroup>
-  <ItemGroup>
     <ClInclude Include="OmniDriver.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="OmniDriver.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="OmniDriver.rc">

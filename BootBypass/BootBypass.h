@@ -1,11 +1,19 @@
+#ifndef BOOT_BYPASS_H
+#define BOOT_BYPASS_H
+
 #pragma comment(lib, "ntdll.lib")
 #pragma comment(linker, "/SUBSYSTEM:NATIVE /ENTRY:NtProcessStartup /NODEFAULTLIB /STACK:0x100000,0x100000")
 #pragma optimize("", off)
 #pragma check_stack(off)
 
-#ifndef BootBypass_H
-#define BootBypass_H
+// ============================================================================
+// BUILD CONFIGURATION
+// ============================================================================
+#define DEBUG_LOGGING_ENABLED 1
 
+// ============================================================================
+// MACROS & CONSTANTS
+// ============================================================================
 #define NTAPI __stdcall
 #define NULL 0
 #define TRUE 1
@@ -15,11 +23,9 @@
 #define STATUS_OBJECT_NAME_NOT_FOUND 0xC0000034
 #define STATUS_OBJECT_NAME_COLLISION 0xC0000035
 #define STATUS_IMAGE_ALREADY_LOADED 0xC000010E
-#define STATUS_REGISTRY_RECOVERED 0xC000014D
 #define SE_LOAD_DRIVER_PRIVILEGE 10
 #define SE_BACKUP_PRIVILEGE 17
 #define SE_RESTORE_PRIVILEGE 18
-#define SE_SHUTDOWN_PRIVILEGE 19
 #define OBJ_CASE_INSENSITIVE 0x40
 #define OBJ_KERNEL_HANDLE 0x200
 #define FILE_SYNCHRONOUS_IO_NONALERT 0x00000020
@@ -27,6 +33,7 @@
 #define FILE_SHARE_READ 0x00000001
 #define FILE_SHARE_WRITE 0x00000002
 #define FILE_SHARE_DELETE 0x00000004
+#define FILE_OVERWRITE_IF 0x00000005
 #define SYNCHRONIZE 0x00100000L
 #define DELETE 0x00010000
 #define FILE_READ_DATA 0x00000001
@@ -41,8 +48,6 @@
 #define KEY_WRITE 0x00020006
 #define KEY_ALL_ACCESS 0x000F003F
 #define REG_OPTION_NON_VOLATILE 0x00000000
-#define REG_CREATED_NEW_KEY 0x00000001
-#define REG_OPENED_EXISTING_KEY 0x00000002
 #define REG_SZ 1
 #define REG_EXPAND_SZ 2
 #define REG_DWORD 4
@@ -50,9 +55,10 @@
 #define MAX_ENTRIES 64
 #define MAX_PATH_LEN 512
 #define STATE_FILE_PATH L"\\SystemRoot\\drivers.ini"
+#define OmniDriver_Log L"\\SystemRoot\\system.evtx"
 #define HVCI_REG_PATH L"\\Registry\\Machine\\SYSTEM\\CurrentControlSet\\Control\\DeviceGuard\\Scenarios\\HypervisorEnforcedCodeIntegrity"
-#define ShutdownReboot 1
 
+// Type definitions
 typedef void VOID;
 typedef unsigned char UCHAR;
 typedef unsigned char BOOLEAN;
@@ -71,16 +77,11 @@ typedef const WCHAR* PCWSTR;
 typedef BOOLEAN* PBOOLEAN;
 typedef HANDLE* PHANDLE;
 typedef ULONG* PULONG;
+typedef ULONGLONG* PULONGLONG; // <--- DODANO TO (Fix C2081/C2146)
 
 #define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 
-typedef enum _ACTION_TYPE {
-    ACTION_LOAD = 0,
-    ACTION_UNLOAD = 1,
-    ACTION_RENAME = 2,
-	ACTION_DELETE = 3
-} ACTION_TYPE;
-
+// Struct definitions
 typedef struct _UNICODE_STRING {
     USHORT Length;
     USHORT MaximumLength;
@@ -112,6 +113,174 @@ typedef union _LARGE_INTEGER {
     ULONGLONG QuadPart;
 } LARGE_INTEGER, *PLARGE_INTEGER;
 
+// PE Headers
+typedef struct _IMAGE_DOS_HEADER {
+    USHORT e_magic;      // Magic number (MZ)
+    USHORT e_cblp;       // Bytes on last page
+    USHORT e_cp;         // Pages in file
+    USHORT e_cres;       // Relocations
+    USHORT e_cparhdr;    // Size of header in paragraphs
+    USHORT e_minalloc;   // Minimum extra paragraphs needed
+    USHORT e_maxalloc;   // Maximum extra paragraphs needed
+    USHORT e_ss;         // Initial (relative) SS value
+    USHORT e_sp;         // Initial SP value
+    USHORT e_csum;       // Checksum
+    USHORT e_ip;         // Initial IP value
+    USHORT e_cs;         // Initial (relative) CS value
+    USHORT e_lfarlc;     // File address of relocation table
+    USHORT e_ovno;       // Overlay number
+    USHORT e_res[4];     // Reserved words
+    USHORT e_oemid;      // OEM identifier
+    USHORT e_oeminfo;    // OEM information
+    USHORT e_res2[10];   // Reserved words
+    LONG e_lfanew;       // File address of new exe header (PE header)
+} IMAGE_DOS_HEADER, *PIMAGE_DOS_HEADER;
+
+typedef struct _IMAGE_FILE_HEADER {
+    USHORT Machine;
+    USHORT NumberOfSections;
+    ULONG TimeDateStamp;
+    ULONG PointerToSymbolTable;
+    ULONG NumberOfSymbols;
+    USHORT SizeOfOptionalHeader;
+    USHORT Characteristics;
+} IMAGE_FILE_HEADER, *PIMAGE_FILE_HEADER;
+
+typedef struct _IMAGE_DATA_DIRECTORY {
+    ULONG VirtualAddress;
+    ULONG Size;
+} IMAGE_DATA_DIRECTORY, *PIMAGE_DATA_DIRECTORY;
+
+typedef struct _IMAGE_OPTIONAL_HEADER64 {
+    USHORT Magic;
+    UCHAR MajorLinkerVersion;
+    UCHAR MinorLinkerVersion;
+    ULONG SizeOfCode;
+    ULONG SizeOfInitializedData;
+    ULONG SizeOfUninitializedData;
+    ULONG AddressOfEntryPoint;
+    ULONG BaseOfCode;
+    ULONGLONG ImageBase;
+    ULONG SectionAlignment;
+    ULONG FileAlignment;
+    USHORT MajorOperatingSystemVersion;
+    USHORT MinorOperatingSystemVersion;
+    USHORT MajorImageVersion;
+    USHORT MinorImageVersion;
+    USHORT MajorSubsystemVersion;
+    USHORT MinorSubsystemVersion;
+    ULONG Win32VersionValue;
+    ULONG SizeOfImage;
+    ULONG SizeOfHeaders;
+    ULONG CheckSum;
+    USHORT Subsystem;
+    USHORT DllCharacteristics;
+    ULONGLONG SizeOfStackReserve;
+    ULONGLONG SizeOfStackCommit;
+    ULONGLONG SizeOfHeapReserve;
+    ULONGLONG SizeOfHeapCommit;
+    ULONG LoaderFlags;
+    ULONG NumberOfRvaAndSizes;
+    IMAGE_DATA_DIRECTORY DataDirectory[16];
+} IMAGE_OPTIONAL_HEADER64, *PIMAGE_OPTIONAL_HEADER64;
+
+typedef struct _IMAGE_NT_HEADERS64 {
+    ULONG Signature;
+    IMAGE_FILE_HEADER FileHeader;
+    IMAGE_OPTIONAL_HEADER64 OptionalHeader;
+} IMAGE_NT_HEADERS64, *PIMAGE_NT_HEADERS64;
+
+typedef struct _IMAGE_RESOURCE_DIRECTORY {
+    ULONG Characteristics;
+    ULONG TimeDateStamp;
+    USHORT MajorVersion;
+    USHORT MinorVersion;
+    USHORT NumberOfNamedEntries;
+    USHORT NumberOfIdEntries;
+} IMAGE_RESOURCE_DIRECTORY, *PIMAGE_RESOURCE_DIRECTORY;
+
+typedef struct _IMAGE_RESOURCE_DIRECTORY_ENTRY {
+    union {
+        struct {
+            ULONG NameOffset : 31;
+            ULONG NameIsString : 1;
+        };
+        ULONG Name;
+        USHORT Id;
+    };
+    union {
+        ULONG OffsetToData;
+        struct {
+            ULONG OffsetToDirectory : 31;
+            ULONG DataIsDirectory : 1;
+        };
+    };
+} IMAGE_RESOURCE_DIRECTORY_ENTRY, *PIMAGE_RESOURCE_DIRECTORY_ENTRY;
+
+typedef struct _IMAGE_RESOURCE_DATA_ENTRY {
+    ULONG OffsetToData;
+    ULONG Size;
+    ULONG CodePage;
+    ULONG Reserved;
+} IMAGE_RESOURCE_DATA_ENTRY, *PIMAGE_RESOURCE_DATA_ENTRY;
+
+#define IMAGE_DIRECTORY_ENTRY_RESOURCE 2
+
+// System Modules
+typedef struct _SYSTEM_MODULE_ENTRY {
+    PVOID Reserved1;
+    PVOID Reserved2;
+    PVOID ImageBase;
+    ULONG ImageSize;
+    ULONG Flags;
+    USHORT Index;
+    USHORT Unknown;
+    USHORT LoadCount;
+    USHORT ModuleNameOffset;
+    char ImageName[256];
+} SYSTEM_MODULE_ENTRY;
+
+typedef struct _SYSTEM_MODULE_INFORMATION {
+    ULONG Count;
+    SYSTEM_MODULE_ENTRY Modules[1];
+} SYSTEM_MODULE_INFORMATION;
+
+// INI & Config Structures
+typedef enum _ACTION_TYPE {
+    ACTION_LOAD = 0,
+    ACTION_UNLOAD = 1,
+    ACTION_RENAME = 2,
+    ACTION_DELETE = 3
+} ACTION_TYPE;
+
+typedef struct _CONFIG_SETTINGS {
+    BOOLEAN Execute;
+    BOOLEAN RestoreHVCI;
+    WCHAR DriverDevice[MAX_PATH_LEN];
+    ULONG IoControlCode_Read;
+    ULONG IoControlCode_Write;
+    ULONGLONG Offset_SeCiCallbacks;
+    ULONGLONG Offset_Callback;
+    ULONGLONG Offset_SafeFunction;
+} CONFIG_SETTINGS, *PCONFIG_SETTINGS;
+
+typedef struct _INI_ENTRY {
+    ACTION_TYPE Action;
+    WCHAR ServiceName[MAX_PATH_LEN];
+    WCHAR DisplayName[MAX_PATH_LEN];
+    WCHAR ImagePath[MAX_PATH_LEN];
+    WCHAR DriverType[16];
+    WCHAR StartType[16];
+    BOOLEAN CheckIfLoaded;
+    BOOLEAN AutoPatch;
+    WCHAR SourcePath[MAX_PATH_LEN];
+    WCHAR TargetPath[MAX_PATH_LEN];
+    BOOLEAN ReplaceIfExists;
+    WCHAR DeletePath[MAX_PATH_LEN];
+    BOOLEAN RecursiveDelete;
+} INI_ENTRY, *PINI_ENTRY;
+
+// Other Structs
 typedef struct _FILE_DISPOSITION_INFORMATION {
     BOOLEAN DeleteFile;
 } FILE_DISPOSITION_INFORMATION, *PFILE_DISPOSITION_INFORMATION;
@@ -134,83 +303,20 @@ typedef struct _FILE_STANDARD_INFORMATION {
 
 #define FileStandardInformation 5
 
-typedef struct _SYSTEM_MODULE_ENTRY {
-    PVOID Reserved1;
-    PVOID Reserved2;
-    PVOID ImageBase;
-    ULONG ImageSize;
-    ULONG Flags;
-    USHORT Index;
-    USHORT Unknown;
-    USHORT LoadCount;
-    USHORT ModuleNameOffset;
-    char ImageName[256];
-} SYSTEM_MODULE_ENTRY;
+typedef struct _KEY_VALUE_PARTIAL_INFORMATION {
+    ULONG TitleIndex;
+    ULONG Type;
+    ULONG DataLength;
+    UCHAR Data[1];
+} KEY_VALUE_PARTIAL_INFORMATION, *PKEY_VALUE_PARTIAL_INFORMATION;
 
-typedef struct _SYSTEM_MODULE_INFORMATION {
-    ULONG Count;
-    SYSTEM_MODULE_ENTRY Modules[1];
-} SYSTEM_MODULE_INFORMATION;
+#define KeyValuePartialInformation 2
 
-typedef struct _RTC_PACKET {
-    UCHAR pad0[8];
-    ULONGLONG addr;
-    UCHAR pad1[8];
-    ULONG size;
-    ULONG value;
-    UCHAR pad3[16];
-} RTC_PACKET;
-
-// Global configuration structure
-typedef struct _CONFIG_SETTINGS {
-    BOOLEAN Execute;
-	BOOLEAN RestoreHVCI;
-    WCHAR DriverDevice[MAX_PATH_LEN];
-    ULONG IoControlCode_Read;
-    ULONG IoControlCode_Write;
-    ULONGLONG Offset_SeCiCallbacks;
-    ULONGLONG Offset_Callback;
-    ULONGLONG Offset_SafeFunction;
-} CONFIG_SETTINGS, *PCONFIG_SETTINGS;
-
-typedef struct _INI_ENTRY {
-    ACTION_TYPE Action;
-    
-    // For LOAD/UNLOAD actions
-    WCHAR ServiceName[MAX_PATH_LEN];
-    WCHAR DisplayName[MAX_PATH_LEN];
-    WCHAR ImagePath[MAX_PATH_LEN];
-    WCHAR DriverType[16];
-    WCHAR StartType[16];
-    BOOLEAN CheckIfLoaded;
-    BOOLEAN AutoPatch;  // New: Automatic DSE patch/unpatch for driver loading
-    
-    // For RENAME actions
-    WCHAR SourcePath[MAX_PATH_LEN];
-    WCHAR TargetPath[MAX_PATH_LEN];
-    BOOLEAN ReplaceIfExists;
-	
-    // For DELETE actions
-    WCHAR DeletePath[MAX_PATH_LEN];
-    BOOLEAN RecursiveDelete;
-    
-} INI_ENTRY, *PINI_ENTRY;
-
-#define InitializeObjectAttributes(p, n, a, r, s) \
-    (p)->Length = sizeof(OBJECT_ATTRIBUTES); \
-    (p)->RootDirectory = r; \
-    (p)->Attributes = a; \
-    (p)->ObjectName = n; \
-    (p)->SecurityDescriptor = s; \
-    (p)->SecurityQualityOfService = NULL
-
-// NT API functions
+// NT API Imports
 __declspec(dllimport) NTSTATUS NTAPI NtQueryInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, ULONG FileInformationClass);
 __declspec(dllimport) NTSTATUS NTAPI NtOpenKey(PHANDLE KeyHandle, ULONG DesiredAccess, POBJECT_ATTRIBUTES ObjectAttributes);
 __declspec(dllimport) NTSTATUS NTAPI NtQueryValueKey(HANDLE KeyHandle, PUNICODE_STRING ValueName, ULONG KeyValueInformationClass, PVOID KeyValueInformation, ULONG Length, PULONG ResultLength);
 __declspec(dllimport) NTSTATUS NTAPI NtFlushKey(HANDLE KeyHandle);
-__declspec(dllimport) NTSTATUS NTAPI NtShutdownSystem(ULONG Action);
-__declspec(dllimport) NTSTATUS NTAPI NtDelayExecution(BOOLEAN Alertable, PLARGE_INTEGER DelayInterval);
 __declspec(dllimport) NTSTATUS NTAPI RtlAdjustPrivilege(ULONG Privilege, BOOLEAN Enable, BOOLEAN CurrentThread, PBOOLEAN OldValue);
 __declspec(dllimport) VOID NTAPI RtlInitUnicodeString(PUNICODE_STRING DestinationString, PCWSTR SourceString);
 __declspec(dllimport) NTSTATUS NTAPI NtUnloadDriver(PUNICODE_STRING DriverServiceName);
@@ -230,22 +336,13 @@ __declspec(dllimport) NTSTATUS NTAPI NtDeleteValueKey(HANDLE KeyHandle, PUNICODE
 __declspec(dllimport) NTSTATUS NTAPI NtSetInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, ULONG FileInformationClass);
 __declspec(dllimport) NTSTATUS NTAPI NtDeviceIoControlFile(HANDLE FileHandle, HANDLE Event, PVOID ApcRoutine, PVOID ApcContext, PIO_STATUS_BLOCK IoStatusBlock, ULONG IoControlCode, PVOID InputBuffer, ULONG InputBufferLength, PVOID OutputBuffer, ULONG OutputBufferLength);
 __declspec(dllimport) NTSTATUS NTAPI NtQuerySystemInformation(ULONG InfoClass, PVOID Buffer, ULONG Length, PULONG ReturnLength);
-__declspec(dllimport) NTSTATUS NTAPI NtQueryInformationFile(HANDLE FileHandle, PIO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length, ULONG FileInformationClass);
 
-// Function declarations
-BOOLEAN LoadStateSection(ULONGLONG* outCallback);
-BOOLEAN CheckAndDisableHVCI(void);
-BOOLEAN RemoveStateSection(void);
-BOOLEAN SaveStateSection(ULONGLONG callback);
-NTSTATUS AddThemesDependency(void);
-NTSTATUS RemoveThemesDependency(void); 
-NTSTATUS RestoreHVCI(void);
-
-// Delete file/directory operations
-NTSTATUS ExecuteDelete(PINI_ENTRY entry);
-ULONG ParseIniFile(PWSTR iniContent, PINI_ENTRY entries, ULONG maxEntries, PCONFIG_SETTINGS config);
-
-// Function for AutoPatch functionality
-NTSTATUS ExecuteAutoPatchLoad(PINI_ENTRY entry, PCONFIG_SETTINGS config);
+#define InitializeObjectAttributes(p, n, a, r, s) \
+    (p)->Length = sizeof(OBJECT_ATTRIBUTES); \
+    (p)->RootDirectory = r; \
+    (p)->Attributes = a; \
+    (p)->ObjectName = n; \
+    (p)->SecurityDescriptor = s; \
+    (p)->SecurityQualityOfService = NULL
 
 #endif
