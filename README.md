@@ -748,7 +748,7 @@ Module Base Finder - Enumerates all loaded modules in any process with base addr
 Cross-Process Memory Operations - Read/write arbitrary process memory via kernel driver
 
 Example Usage:
-cmd# Load OmniDriver via BootBypass (AutoPatch=YES in drivers.ini)
+# Load OmniDriver via BootBypass (AutoPatch=YES in drivers.ini)
 # OR manually after DSE bypass:
 sc create OmniDriver binPath= C:\Windows\System32\drivers\OmniDriver.sys type= kernel
 sc start OmniDriver
