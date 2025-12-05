@@ -36,7 +36,7 @@ Both paths achieve identical results through different technical approaches, sho
 **💻 Runtime Execution (drvloader)**
 - Interactive Win32 GUI with real-time DSE status checking
 - Dynamic PDB symbol resolution from Microsoft Symbol Server
-- Mini-PDB caching system (96-byte `.mpdb` files) for offline operation
+- Mini-PDB caching system (32-byte `.mpdb` files) for offline operation
 - Automatic offset detection and `drivers.ini` synchronization
 - No reboot required for DSE bypass operations
 
@@ -165,7 +165,7 @@ Interactive DSE bypass tool with dynamic symbol resolution and offset detection.
 
 **Key Features:**
 - **PDB Symbol Download**: Automatic download from `https://msdl.microsoft.com/download/symbols`
-- **Mini-PDB Cache**: Creates 96-byte `.mpdb` files with extracted offsets for offline use
+- **Mini-PDB Cache**: Creates 32-byte `.mpdb` files with extracted offsets for offline use
 - **Offset Auto-Update**: Option 2 updates `drivers.ini` with current kernel offsets
 - **No Driver Needed for Offset Detection**: PDB parsing requires no kernel driver installation
 
@@ -1030,7 +1030,7 @@ Process:
    a. Download ntoskrnl.pdb from Microsoft Symbol Server
    b. Parse PDB using DbgHelp API (no driver needed!)
    c. Extract SeCiCallbacks and ZwFlushInstructionCache offsets
-   d. Create mini-PDB for future offline use (96 bytes)
+   d. Create mini-PDB for future offline use (32 bytes)
 4. Update C:\Windows\drivers.ini [Config] section
 5. Save to registry: HKCU\Software\drvloader\History\{timestamp}
 6. Display offset information
