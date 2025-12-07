@@ -3,9 +3,9 @@
 > ### 🚀 Update: 07.12.2025 - FastReboot Architecture
 > **New "FastReboot" mechanism introduced.**
 > 
-> [cite_start]The framework now utilizes direct raw-disk SYSTEM hive patching via a **Chunked Rolling Scan** algorithm[cite: 365, 374]. [cite_start]This allows for immediate HVCI disabling and system restart (`NtShutdownSystem`) purely within the Native (SMSS) phase.
+> The framework now utilizes direct raw-disk SYSTEM hive patching via a **Chunked Rolling Scan** algorithm[cite: 365, 374]. [cite_start]This allows for immediate HVCI disabling and system restart (`NtShutdownSystem`) purely within the Native (SMSS) phase.
 > 
-> [cite_start]* **Zero Dependencies:** Completely removed the `RebootGuardian` service and `Themes` dependency chain[cite: 75, 582].
+> * **Zero Dependencies:** Completely removed the `RebootGuardian` service and `Themes` dependency chain[cite: 75, 582].
 > * **Stealth & Speed:** Operations occur before Win32 subsystem initialization, leaving no service artifacts and significantly reducing reboot turnaround time.
 ![Demo](images/intro.gif)
 
