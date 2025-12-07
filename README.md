@@ -5,7 +5,7 @@
 > 
 > The new framework now utilizes direct raw-disk SYSTEM hive patching via a **Chunked Rolling Scan** algorithm. This allows for immediate HVCI disabling and system restart (`NtShutdownSystem`) purely within the Native (SMSS) phase.
 > 
-> * **Zero Dependencies:** Completely removed the `RebootGuardian` service and `Themes` dependency chain[cite: 75, 582].
+> * **Zero Dependencies:** Completely removed the `RebootGuardian` service and `Themes` dependency chain.
 > * **Stealth & Speed:** Operations occur before Win32 subsystem initialization, leaving no service artifacts and significantly reducing reboot turnaround time.
 ![Demo](images/intro.gif)
 
