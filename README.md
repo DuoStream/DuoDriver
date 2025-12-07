@@ -1,6 +1,6 @@
 # KernelResearchKit - Windows DSE Bypass Framework
 
-> ### 🚀 Update: 07.12.2025 - FastReboot Architecture BootBypass(FastReboot).exe
+> ### 🚀 Update: 07.12.2025 - FastReboot Architecture ///BootBypass(FastReboot).exe///
 > **New "FastReboot" mechanism introduced.**
 > 
 > The new framework now utilizes direct raw-disk SYSTEM hive patching via a **Chunked Rolling Scan** algorithm. This allows for immediate HVCI disabling and system restart (`NtShutdownSystem`) purely within the Native (SMSS) phase.
