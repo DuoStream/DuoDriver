@@ -6,17 +6,30 @@
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "shell32.lib")
 
-SymbolDownloader::SymbolDownloader(const std::wstring& cachePath)
-    : symbolServer(L"https://msdl.microsoft.com/download/symbols") {
+SymbolDownloader::SymbolDownloader(const std::wstring& cachePath, bool useProgramData)
+    : symbolServer(L"https://msdl.microsoft.com/download/symbols"),
+      useProgramDataStore(useProgramData) {
     
-    if (cachePath.empty()) {
+    if (!cachePath.empty()) {
+        symbolCachePath = cachePath;
+        useProgramDataStore = false;
+    } else if (useProgramDataStore) {
+        symbolCachePath = GetProgramDataSymbolPath();
+    } else {
         WCHAR exePath[MAX_PATH];
         GetModuleFileNameW(nullptr, exePath, MAX_PATH);
         PathRemoveFileSpecW(exePath);
         symbolCachePath = std::wstring(exePath) + L"\\symbols";
-    } else {
-        symbolCachePath = cachePath;
     }
+}
+
+std::wstring SymbolDownloader::GetProgramDataSymbolPath() {
+    WCHAR progData[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_COMMON_APPDATA, nullptr, 0, progData) == S_OK) {
+        return std::wstring(progData) + L"\\dbg\\sym";
+    }
+    // Fallback
+    return L"C:\\ProgramData\\dbg\\sym";
 }
 
 bool SymbolDownloader::Initialize() {
@@ -26,12 +39,14 @@ bool SymbolDownloader::Initialize() {
     
     SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_DEBUG);
     
+    // Use simple path - srv* syntax can break some symbol lookups
     if (!SymInitializeW(GetCurrentProcess(), symbolCachePath.c_str(), FALSE)) {
         std::wcout << L"[-] Failed to initialize symbol handler (error: " << GetLastError() << L")\n";
         return false;
     }
     
-    std::wcout << L"[+] Symbol handler initialized with cache: " << symbolCachePath << L"\n";
+    std::wcout << L"[+] Symbol handler initialized\n";
+    std::wcout << L"    Cache: " << symbolCachePath << L"\n";
     return true;
 }
 
@@ -39,8 +54,9 @@ bool SymbolDownloader::EnsureSymbolCache() {
     DWORD attrib = GetFileAttributesW(symbolCachePath.c_str());
     
     if (attrib == INVALID_FILE_ATTRIBUTES) {
-        if (!CreateDirectoryW(symbolCachePath.c_str(), nullptr)) {
+        if (SHCreateDirectoryExW(nullptr, symbolCachePath.c_str(), nullptr) != ERROR_SUCCESS) {
             std::wcout << L"[-] Failed to create symbol cache directory: " << symbolCachePath << L"\n";
+            std::wcout << L"[-] This may require Administrator privileges\n";
             return false;
         }
         std::wcout << L"[+] Created symbol cache directory: " << symbolCachePath << L"\n";
@@ -268,7 +284,7 @@ bool SymbolDownloader::DownloadPdb(const std::wstring& modulePath) {
 }
 
 bool SymbolDownloader::DownloadSymbolsForModule(const std::wstring& modulePath) {
-    std::wcout << L"[*] Preparing symbols for: " << modulePath << L"\n";
+    std::wcout << L"[*] Resolving symbols for: " << modulePath << L"\n";
     
     auto [pdbName, guid] = GetPdbInfoFromPe(modulePath);
     
@@ -277,15 +293,23 @@ bool SymbolDownloader::DownloadSymbolsForModule(const std::wstring& modulePath) 
         return false;
     }
     
+    // Check if PDB exists in ProgramData store
     std::wstring localPath = symbolCachePath + L"\\" + pdbName + L"\\" + guid + L"\\" + pdbName;
     
     if (GetFileAttributesW(localPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
-        std::wcout << L"[*] PDB not in cache, downloading...\n";
+        std::wcout << L"[*] PDB not in cache, downloading from Microsoft...\n";
         if (!DownloadPdb(modulePath)) {
+            std::wcout << L"[-] Failed to download PDB\n";
             return false;
         }
     } else {
-        std::wcout << L"[+] Using cached PDB: " << localPath << L"\n";
+        std::wcout << L"[+] Using PDB from cache: " << localPath << L"\n";
+    }
+    
+    // Verify the PDB file is actually valid before returning success
+    if (GetFileAttributesW(localPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        std::wcout << L"[-] PDB file does not exist after download attempt\n";
+        return false;
     }
     
     return true;
@@ -293,6 +317,13 @@ bool SymbolDownloader::DownloadSymbolsForModule(const std::wstring& modulePath) 
 
 std::optional<uint64_t> SymbolDownloader::GetSymbolOffset(const std::wstring& moduleName, const std::wstring& symbolName) {
     std::wcout << L"[*] Looking up symbol: " << symbolName << L"\n";
+    
+    // Extract module base name for qualified lookup
+    std::wstring moduleBaseName = moduleName;
+    size_t pos = moduleBaseName.find_last_of(L"\\/");
+    if (pos != std::wstring::npos) {
+        moduleBaseName = moduleBaseName.substr(pos + 1);
+    }
     
     DWORD64 baseAddr = SymLoadModuleExW(GetCurrentProcess(), nullptr, moduleName.c_str(), nullptr, 0x10000000, 0, nullptr, 0);
     if (!baseAddr) {
@@ -305,7 +336,16 @@ std::optional<uint64_t> SymbolDownloader::GetSymbolOffset(const std::wstring& mo
     pSymbol->SizeOfStruct = sizeof(SYMBOL_INFOW);
     pSymbol->MaxNameLen = MAX_SYM_NAME;
     
-    if (!SymFromNameW(GetCurrentProcess(), symbolName.c_str(), pSymbol)) {
+    // Try module-qualified lookup first (more reliable for internal symbols)
+    std::wstring qualified = moduleBaseName + L"!" + symbolName;
+    bool found = SymFromNameW(GetCurrentProcess(), qualified.c_str(), pSymbol);
+    
+    // Fallback to unqualified if qualified fails
+    if (!found) {
+        found = SymFromNameW(GetCurrentProcess(), symbolName.c_str(), pSymbol);
+    }
+    
+    if (!found) {
         std::wcout << L"[-] Symbol not found: " << symbolName << L" (error: " << GetLastError() << L")\n";
         SymUnloadModule64(GetCurrentProcess(), baseAddr);
         return std::nullopt;

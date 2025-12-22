@@ -46,7 +46,7 @@ void DisplayOffsetInfo(DrvLoader& loader, bool waitForKey) {
     std::wcout << L"=========================================================\n";
     std::wcout << L"\n";
     
-    // 1. Get symbol offsets
+    // 1. Get symbol offsets using strict resolution
     uint64_t seCiCallbacks, safeFunction;
     if (!loader.GetSymbolOffsets(&seCiCallbacks, &safeFunction)) {
         std::wcout << L"[-] Failed to get symbol offsets\n";
@@ -70,53 +70,13 @@ void DisplayOffsetInfo(DrvLoader& loader, bool waitForKey) {
     std::wstring buildInfo = ConfigManager::GetWindowsBuildNumber();
     bool registrySaved = ConfigManager::SaveOffsetsToRegistry(seCiCallbacks, safeFunction, buildInfo);
     
-    // 4. Create mini-PDB file for BootBypass auto-detection
+    // 4. Create mini-PDB file for BootBypass auto-detection (optional artifact)
     WCHAR systemRoot[MAX_PATH];
     GetSystemDirectoryW(systemRoot, MAX_PATH);
     std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
     
-    // Get PDB GUID from kernel
-    HANDLE hFile = CreateFileW(ntoskrnlPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
-    std::wstring pdbGuid;
-    if (hFile != INVALID_HANDLE_VALUE) {
-        HANDLE hMapping = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
-        if (hMapping) {
-            LPVOID pBase = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
-            if (pBase) {
-                PIMAGE_DOS_HEADER pDos = (PIMAGE_DOS_HEADER)pBase;
-                if (pDos->e_magic == IMAGE_DOS_SIGNATURE) {
-                    PIMAGE_NT_HEADERS pNt = (PIMAGE_NT_HEADERS)((BYTE*)pBase + pDos->e_lfanew);
-                    if (pNt->Signature == IMAGE_NT_SIGNATURE) {
-                        DWORD debugDirRva = pNt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress;
-                        if (debugDirRva) {
-                            PIMAGE_DEBUG_DIRECTORY pDebugDir = (PIMAGE_DEBUG_DIRECTORY)((BYTE*)pBase + debugDirRva);
-                            if (pDebugDir->Type == IMAGE_DEBUG_TYPE_CODEVIEW) {
-                                struct CV_INFO_PDB70 {
-                                    DWORD CvSignature;
-                                    GUID Signature;
-                                    DWORD Age;
-                                    char PdbFileName[1];
-                                };
-                                CV_INFO_PDB70* pCv = (CV_INFO_PDB70*)((BYTE*)pBase + pDebugDir->AddressOfRawData);
-                                if (pCv->CvSignature == 0x53445352) {
-                                    wchar_t guidBuf[64];
-                                    swprintf_s(guidBuf, L"%08X%04X%04X%02X%02X%02X%02X%02X%02X%02X%02X%X",
-                                        pCv->Signature.Data1, pCv->Signature.Data2, pCv->Signature.Data3,
-                                        pCv->Signature.Data4[0], pCv->Signature.Data4[1], pCv->Signature.Data4[2],
-                                        pCv->Signature.Data4[3], pCv->Signature.Data4[4], pCv->Signature.Data4[5],
-                                        pCv->Signature.Data4[6], pCv->Signature.Data4[7], pCv->Age);
-                                    pdbGuid = guidBuf;
-                                }
-                            }
-                        }
-                    }
-                }
-                UnmapViewOfFile(pBase);
-            }
-            CloseHandle(hMapping);
-        }
-        CloseHandle(hFile);
-    }
+    // Use SymbolDownloader to get PDB GUID (no duplicate code)
+    auto [pdbName, pdbGuid] = loader.symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
     
     bool miniPdbCreated = false;
     if (!pdbGuid.empty()) {

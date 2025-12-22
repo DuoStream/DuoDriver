@@ -17,6 +17,9 @@ class SymbolDownloader {
 private:
     std::wstring symbolCachePath;
     std::wstring symbolServer;
+
+	// Whether to use ProgramData directory for symbol cache storage
+	bool useProgramDataStore;
     
     // Ensures symbol cache directory exists
     bool EnsureSymbolCache();
@@ -26,9 +29,12 @@ private:
     
     // Downloads file from URL to local path
     bool DownloadFile(const std::wstring& url, const std::wstring& outputPath);
+	
+	// Gets ProgramData directory path for symbol cache
+	std::wstring GetProgramDataSymbolPath();
 
 public:
-    SymbolDownloader(const std::wstring& cachePath = L"");
+    SymbolDownloader(const std::wstring& cachePath = L"", bool useProgramData = true);
     
     // Initializes symbol handler and cache
     bool Initialize();

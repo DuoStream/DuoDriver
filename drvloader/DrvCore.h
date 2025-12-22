@@ -34,6 +34,15 @@ public:
 
     // Resolves necessary kernel symbol offsets
     bool GetSymbolOffsets(uint64_t* seCiCallbacks, uint64_t* safeFunction);
+	
+	// Strictly resolves kernel offsets from current ntoskrnl.exe PDB (no cache)
+	std::optional<std::pair<uint64_t, uint64_t>> ResolveKernelOffsetsStrict();
+
+	// Validates kernel addresses before patching
+	bool ValidateKernelAddresses(uint64_t ntBase, uint64_t seCiRva, uint64_t zwRva);
+
+	// Gets .text section bounds from ntoskrnl.exe on disk
+	std::optional<std::pair<uint64_t, uint64_t>> GetTextSectionBounds(const std::wstring& ntoskrnlPath);
     
     // Initializes the loader and checks registry state
     bool Initialize();
@@ -68,7 +77,6 @@ private:
     bool CheckDriverFileExists();
     
     // Internal DSE helpers
-    bool TryLoadOffsetsFromCache(uint64_t* seCiCallbacks, uint64_t* safeFunction);
     bool BypassDSEInternal();
     bool RestoreDSEInternal();
 };
