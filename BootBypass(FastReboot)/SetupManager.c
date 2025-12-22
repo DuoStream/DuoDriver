@@ -161,8 +161,19 @@ NTSTATUS CleanupOmniDriver(void) {
     HANDLE hKey;
     PWSTR driverName = MmGetPoolDiagnosticString();
 
-    wcscpy(fullServicePath, L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
-    wcscat(fullServicePath, driverName);
+    // Safe path construction with bounds checking
+    SIZE_T baseLen = wcscpy_safe(fullServicePath, MAX_PATH_LEN, 
+                                  L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
+    if (baseLen >= MAX_PATH_LEN - 1) {
+        DEBUG_LOG(L"WARNING: Service path too long for cleanup\r\n");
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+    
+    SIZE_T finalLen = wcscat_safe(fullServicePath, MAX_PATH_LEN, driverName);
+    if (finalLen >= MAX_PATH_LEN) {
+        DEBUG_LOG(L"WARNING: Service path truncated during cleanup\r\n");
+        return STATUS_OBJECT_NAME_INVALID;
+    }
 
     RtlInitUnicodeString(&usServiceName, fullServicePath);
     InitializeObjectAttributes(&oa, &usServiceName, OBJ_CASE_INSENSITIVE, NULL, NULL);
@@ -232,6 +243,7 @@ BOOLEAN PatchSystemHiveHVCI(BOOLEAN enable) {
 
     // Query file size to control the scanning loop
     FILE_STANDARD_INFORMATION fileInfo;
+    memset_impl(&fileInfo, 0, sizeof(fileInfo));
     status = NtQueryInformationFile(hFile, &iosb, &fileInfo, sizeof(fileInfo), FileStandardInformation);
     if (!NT_SUCCESS(status)) {
         NtClose(hFile);
@@ -246,7 +258,7 @@ BOOLEAN PatchSystemHiveHVCI(BOOLEAN enable) {
 
     fileOffset.QuadPart = 0;
 
-    // --- MAIN LOOP: CHUNK BY CHUNK ---
+    // Main loop: chunk by chunk
     while (currentPos < fileSize) {
         
         // Read next file chunk (1 MB)
@@ -254,9 +266,9 @@ BOOLEAN PatchSystemHiveHVCI(BOOLEAN enable) {
         
         // Handle read errors or EOF scenarios
         if (!NT_SUCCESS(status)) {
-             if (status == 0x103 /*STATUS_PENDING*/) {
-                 // Rare in sync mode, but handled by ignoring here as buffer fills
-             } else if (status != 0x80000011 /*STATUS_END_OF_FILE*/) {
+             if (status == 0x103) {
+                 // STATUS_PENDING - rare in sync mode
+             } else if (status != 0x80000011) {
                  break; // Generic read error
              }
         }
@@ -264,11 +276,11 @@ BOOLEAN PatchSystemHiveHVCI(BOOLEAN enable) {
         bytesRead = (ULONG)iosb.Information;
         if (bytesRead == 0) break;
 
-        // --- IN-CHUNK SCANNING ---
+        // In-chunk scanning
         SIZE_T searchStart = 0;
         
         while (searchStart < bytesRead) {
-            // 1. Find key name pattern in current chunk
+            // Find key name pattern in current chunk
             SIZE_T patternOffset = FindPatternInBuffer(chunkBuffer + searchStart, bytesRead - searchStart, (PUCHAR)hvciPattern, 31);
             
             if (patternOffset == (SIZE_T)-1) {
@@ -277,12 +289,11 @@ BOOLEAN PatchSystemHiveHVCI(BOOLEAN enable) {
             
             patternOffset += searchStart; // Convert to chunk-relative offset
 
-            // 2. Rolling Scan: Look for DWORD data signature (04 00 00 80) in 128-byte window
+            // Rolling Scan: Look for DWORD data signature (04 00 00 80) in 128-byte window
             SIZE_T nameEnd = patternOffset + 31;
             SIZE_T valueHeaderOffset = (SIZE_T)-1;
 
             // Ensure scan window fits in buffer
-            // If it exceeds, the Overlap mechanism handles it in the next main loop iteration
             if (nameEnd + 128 < bytesRead) {
                 for (SIZE_T k = 0; k < 128; k++) {
                     if (chunkBuffer[nameEnd + k] == 0x04 && 
@@ -306,8 +317,7 @@ BOOLEAN PatchSystemHiveHVCI(BOOLEAN enable) {
                     if (currentValue == newValue) {
                         skipCount++;
                     } else {
-                        // --- SURGICAL STRIKE WRITE ---
-                        // Calculate absolute file offset
+                        // Surgical strike write - calculate absolute file offset
                         LARGE_INTEGER writeOffset;
                         writeOffset.QuadPart = currentPos + actualValueOffsetChunk;
 
@@ -326,20 +336,17 @@ BOOLEAN PatchSystemHiveHVCI(BOOLEAN enable) {
             searchStart = patternOffset + 31;
         }
 
-        // --- PREPARE FOR NEXT CHUNK ---
-        
+        // Prepare for next chunk
         if (bytesRead < SCAN_CHUNK_SIZE) {
             break; // EOF reached
         }
 
-        // OVERLAP ADJUSTMENT:
-        // Rewind file pointer by OVERLAP_SIZE to catch patterns split across chunk boundaries.
+        // Overlap adjustment: rewind file pointer by OVERLAP_SIZE
         currentPos += (bytesRead - OVERLAP_SIZE);
         fileOffset.QuadPart = currentPos;
     }
 
-    // --- FINALIZATION: REBOOT OR EXIT ---
-
+    // Finalization
     if (patchCount > 0) {
         DisplayMessage(L"SUCCESS: HVCI hive patched\r\n");
         
@@ -422,17 +429,19 @@ BOOLEAN CheckAndDisableHVCI(void) {
         DisplayMessage(L"SUCCESS: HVCI disabled in SYSTEM hive\r\n");
         DisplayMessage(L"INFO: Initiating system reboot...\r\n");
 
-		status = NtShutdownSystem(1);
+        status = NtShutdownSystem(1);
 
-		if (!NT_SUCCESS(status)) {
-			DisplayMessage(L"DEBUG: NtShutdownSystem failed");
-			DisplayStatus(status);
-			return FALSE;
-		}
+        if (!NT_SUCCESS(status)) {
+            DisplayMessage(L"DEBUG: NtShutdownSystem failed");
+            DisplayStatus(status);
+            return FALSE;
+        }
 
-		DisplayMessage(L"INFO: Waiting for system restart...\r\n");
-		while (TRUE) {
-		}
+        DisplayMessage(L"INFO: Waiting for system restart...\r\n");
+        
+        // Replace busy-wait with proper termination
+        // System will reboot anyway, terminate process gracefully
+        NtTerminateProcess((HANDLE)-1, STATUS_SUCCESS);
     }
 
     return FALSE;
@@ -448,4 +457,24 @@ NTSTATUS RestoreHVCI(void) {
 
     DisplayMessage(L"SUCCESS: HVCI will be re-enabled on next boot\r\n");
     return STATUS_SUCCESS;
+}
+
+NTSTATUS SetHVCIRegistryFlag(BOOLEAN enable) {
+    UNICODE_STRING usKeyPath, usValueName;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE hKey = NULL;
+    NTSTATUS status;
+    ULONG value = enable ? 1 : 0;
+
+    RtlInitUnicodeString(&usKeyPath, HVCI_REG_PATH);
+    InitializeObjectAttributes(&oa, &usKeyPath, OBJ_CASE_INSENSITIVE, NULL, NULL);
+
+    status = NtOpenKey(&hKey, KEY_WRITE, &oa);
+    if (!NT_SUCCESS(status)) return status;
+
+    RtlInitUnicodeString(&usValueName, L"Enabled");
+    status = NtSetValueKey(hKey, &usValueName, 0, REG_DWORD, &value, sizeof(ULONG));
+    
+    NtClose(hKey);
+    return status;
 }

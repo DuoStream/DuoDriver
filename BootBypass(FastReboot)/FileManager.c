@@ -29,28 +29,51 @@ NTSTATUS ExecuteRename(PINI_ENTRY entry) {
     RtlInitUnicodeString(&usSourcePath, entry->SourcePath);
     RtlInitUnicodeString(&usTargetPath, entry->TargetPath);
 
+    // Check if target already exists
     InitializeObjectAttributes(&oa, &usTargetPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
     status = NtOpenFile(&hFile, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT);
     if (NT_SUCCESS(status)) {
         NtClose(hFile);
+        // Target exists, check if source exists
         InitializeObjectAttributes(&oa, &usSourcePath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
         status = NtOpenFile(&hFile, FILE_READ_DATA | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT);
-        if (!NT_SUCCESS(status)) { DisplayMessage(L"SKIPPED: Rename complete\r\n"); return STATUS_SUCCESS; }
+        if (!NT_SUCCESS(status)) { 
+            DisplayMessage(L"SKIPPED: Rename complete\r\n"); 
+            return STATUS_SUCCESS; 
+        }
         NtClose(hFile);
     }
 
+    // Open source for rename
     InitializeObjectAttributes(&oa, &usSourcePath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
     status = NtOpenFile(&hFile, DELETE | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT | FILE_SYNCHRONOUS_IO_NONALERT);
     if (!NT_SUCCESS(status)) return status;
 
-    memset_impl(buffer, 0, sizeof(FILE_RENAME_INFORMATION) + usTargetPath.Length);
+    // Prepare rename structure with bounds check
+    SIZE_T targetLenBytes = usTargetPath.Length;
+    SIZE_T requiredSize = sizeof(FILE_RENAME_INFORMATION) + targetLenBytes;
+    
+    if (requiredSize > sizeof(buffer)) {
+        NtClose(hFile);
+        DisplayMessage(L"FAILED: Target path too long for rename\r\n");
+        return STATUS_BUFFER_TOO_SMALL;
+    }
+    
+    memset_impl(buffer, 0, sizeof(buffer));
     pRename->ReplaceIfExists = entry->ReplaceIfExists ? 1 : 0;
-    pRename->FileNameLength = usTargetPath.Length;
-    for (ULONG i = 0; i < (ULONG)usTargetPath.Length / sizeof(WCHAR); i++) pRename->FileName[i] = usTargetPath.Buffer[i];
+    pRename->FileNameLength = (ULONG)usTargetPath.Length;
+    
+    SIZE_T charCount = usTargetPath.Length / sizeof(WCHAR);
+    for (ULONG i = 0; i < charCount; i++) {
+        pRename->FileName[i] = usTargetPath.Buffer[i];
+    }
 
-    status = NtSetInformationFile(hFile, &iosb, pRename, sizeof(FILE_RENAME_INFORMATION) + usTargetPath.Length - 2, 10);
+    status = NtSetInformationFile(hFile, &iosb, pRename, (ULONG)requiredSize - sizeof(WCHAR), 10);
     NtClose(hFile);
-    if (NT_SUCCESS(status)) DisplayMessage(L"SUCCESS: File renamed\r\n");
+    
+    if (NT_SUCCESS(status)) {
+        DisplayMessage(L"SUCCESS: File renamed\r\n");
+    }
     return status;
 }
 
@@ -84,21 +107,49 @@ NTSTATUS DeleteDirectoryRecursive(PUNICODE_STRING dirPath) {
             if (!IsDotDirectory(dirInfo->FileName, dirInfo->FileNameLength)) {
                 WCHAR fullPath[MAX_PATH_LEN];
                 UNICODE_STRING usFullPath;
-                wcscpy(fullPath, dirPath->Buffer); wcscat(fullPath, L"\\");
+                
+                // Safe path construction with bounds checking
+                SIZE_T baseLen = wcscpy_safe(fullPath, MAX_PATH_LEN, dirPath->Buffer);
+                if (baseLen >= MAX_PATH_LEN - 1) {
+                    NtClose(hDir);
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                
+                SIZE_T afterSlash = wcscat_safe(fullPath, MAX_PATH_LEN, L"\\");
+                if (afterSlash >= MAX_PATH_LEN) {
+                    NtClose(hDir);
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                
+                // Append filename with length validation
                 ULONG fnChars = dirInfo->FileNameLength / sizeof(WCHAR);
-                ULONG curLen = (ULONG)wcslen(fullPath); // <--- POPRAWKA RZUTOWANIA
-                for (ULONG i = 0; i < fnChars && (curLen + i) < (MAX_PATH_LEN - 1); i++) fullPath[curLen + i] = dirInfo->FileName[i];
-                fullPath[curLen + fnChars] = 0;
+                SIZE_T currentLen = wcslen(fullPath);
+                
+                if (!validate_string_space(currentLen, fnChars, MAX_PATH_LEN)) {
+                    NtClose(hDir);
+                    return STATUS_BUFFER_TOO_SMALL;
+                }
+                
+                for (ULONG i = 0; i < fnChars; i++) {
+                    fullPath[currentLen + i] = dirInfo->FileName[i];
+                }
+                fullPath[currentLen + fnChars] = 0;
+                
                 RtlInitUnicodeString(&usFullPath, fullPath);
 
-                if (dirInfo->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) DeleteDirectoryRecursive(&usFullPath);
+                // Recursively delete subdirectories
+                if (dirInfo->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                    DeleteDirectoryRecursive(&usFullPath);
+                }
 
+                // Delete file/directory
                 OBJECT_ATTRIBUTES oaItem;
                 HANDLE hItem;
                 InitializeObjectAttributes(&oaItem, &usFullPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
                 status = NtOpenFile(&hItem, DELETE | SYNCHRONIZE, &oaItem, &iosb, FILE_SHARE_DELETE, FILE_OPEN_FOR_BACKUP_INTENT | FILE_SYNCHRONOUS_IO_NONALERT);
                 if (NT_SUCCESS(status)) {
-                    FILE_DISPOSITION_INFORMATION dispInfo; dispInfo.DeleteFile = TRUE;
+                    FILE_DISPOSITION_INFORMATION dispInfo; 
+                    dispInfo.DeleteFile = TRUE;
                     NtSetInformationFile(hItem, &iosb, &dispInfo, sizeof(dispInfo), 13);
                     NtClose(hItem);
                 }
@@ -107,11 +158,15 @@ NTSTATUS DeleteDirectoryRecursive(PUNICODE_STRING dirPath) {
             dirInfo = (PFILE_DIRECTORY_INFORMATION)((UCHAR*)dirInfo + dirInfo->NextEntryOffset);
         }
     }
+    
     NtClose(hDir);
+    
+    // Delete the directory itself
     InitializeObjectAttributes(&oa, dirPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
     status = NtOpenFile(&hDir, DELETE | SYNCHRONIZE, &oa, &iosb, FILE_SHARE_DELETE, FILE_DIRECTORY_FILE | FILE_OPEN_FOR_BACKUP_INTENT | FILE_SYNCHRONOUS_IO_NONALERT);
     if (NT_SUCCESS(status)) {
-        FILE_DISPOSITION_INFORMATION dispInfo; dispInfo.DeleteFile = TRUE;
+        FILE_DISPOSITION_INFORMATION dispInfo; 
+        dispInfo.DeleteFile = TRUE;
         NtSetInformationFile(hDir, &iosb, &dispInfo, sizeof(dispInfo), 13);
         NtClose(hDir);
     }

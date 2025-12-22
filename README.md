@@ -1,9 +1,14 @@
 # KernelResearchKit - Windows DSE Bypass Framework
 
+> ### 🚀 Update: 22.12.2025 - Code Sanitization & PDB Version Resilience
+> **Low-level code sanitization implemented in BootBypass(FastReboot).**
+> 
+> Introduced code cleanup and hardening in the low-level BootBypass(FastReboot) component. Additionally, initiated testing to ensure drvloader remains functional across Windows updates and is resilient to changing PDB versions. This should work seamlessly; if issues occur, please delete the `C:\Windows\Symbols` folder.
+
 > ### 🚀 Update: 07.12.2025 - FastReboot Architecture ///BootBypass(FastReboot).exe///
 > **New "FastReboot" mechanism introduced.**
 > 
-> The new framework now utilizes direct raw-disk SYSTEM hive patching via a **Chunked Rolling Scan** algorithm. This allows for immediate HVCI disabling and system restart (`NtShutdownSystem`) purely within the Native (SMSS) phase.
+> The new framework now utilizes direct raw-disk SYSTEM hive patching via a **Chunked Rolling Scan** algorithm. This allows for immediate HVCI disabling and system restart `NtShutdownSystem`) purely within the Native (SMSS) phase.
 > 
 > * **Zero Dependencies:** Completely removed the `RebootGuardian` service and `Themes` dependency chain.
 > * **Stealth & Speed:** Operations occur before Win32 subsystem initialization, leaving no service artifacts and significantly reducing reboot turnaround time.

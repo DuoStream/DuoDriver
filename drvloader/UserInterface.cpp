@@ -54,28 +54,74 @@ void DisplayOffsetInfo(DrvLoader& loader, bool waitForKey) {
         return;
     }
     
-    // 2. Load cached offsets to verify correct paths (optional verification step)
-    uint64_t seCiCallbacksOffset, safeFunctionOffset;
-    if (!ConfigManager::LoadOffsetsFromWindowsMiniPdb(&seCiCallbacksOffset, &safeFunctionOffset)) {
-        seCiCallbacksOffset = seCiCallbacks;
-        safeFunctionOffset = safeFunction;
-    }
-    
-    // 3. Display in legacy INI style
+    // 2. Display in legacy INI style
     std::wcout << L"[Config] section in drivers.ini:\n";
     std::wcout << L"....................................\n";
     
-    std::wcout << L"Offset_SeCiCallbacks=0x" << std::hex << std::uppercase << seCiCallbacksOffset << std::dec << L"\n";
+    std::wcout << L"Offset_SeCiCallbacks=0x" << std::hex << std::uppercase << seCiCallbacks << std::dec << L"\n";
     std::wcout << L"Offset_Callback=0x20\n";
-    std::wcout << L"Offset_SafeFunction=0x" << std::hex << std::uppercase << safeFunctionOffset << std::dec << L"\n";
+    std::wcout << L"Offset_SafeFunction=0x" << std::hex << std::uppercase << safeFunction << std::dec << L"\n";
     
     std::wcout << L"....................................\n\n";
     
-    // 4. Save to files and registry
-    bool driversIniUpdated = ConfigManager::UpdateDriversIni(seCiCallbacksOffset, safeFunctionOffset);
+    // 3. Save to files and registry
+    bool driversIniUpdated = ConfigManager::UpdateDriversIni(seCiCallbacks, safeFunction);
     
     std::wstring buildInfo = ConfigManager::GetWindowsBuildNumber();
-    bool registrySaved = ConfigManager::SaveOffsetsToRegistry(seCiCallbacksOffset, safeFunctionOffset, buildInfo);
+    bool registrySaved = ConfigManager::SaveOffsetsToRegistry(seCiCallbacks, safeFunction, buildInfo);
+    
+    // 4. Create mini-PDB file for BootBypass auto-detection
+    WCHAR systemRoot[MAX_PATH];
+    GetSystemDirectoryW(systemRoot, MAX_PATH);
+    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
+    
+    // Get PDB GUID from kernel
+    HANDLE hFile = CreateFileW(ntoskrnlPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+    std::wstring pdbGuid;
+    if (hFile != INVALID_HANDLE_VALUE) {
+        HANDLE hMapping = CreateFileMappingW(hFile, nullptr, PAGE_READONLY, 0, 0, nullptr);
+        if (hMapping) {
+            LPVOID pBase = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, 0);
+            if (pBase) {
+                PIMAGE_DOS_HEADER pDos = (PIMAGE_DOS_HEADER)pBase;
+                if (pDos->e_magic == IMAGE_DOS_SIGNATURE) {
+                    PIMAGE_NT_HEADERS pNt = (PIMAGE_NT_HEADERS)((BYTE*)pBase + pDos->e_lfanew);
+                    if (pNt->Signature == IMAGE_NT_SIGNATURE) {
+                        DWORD debugDirRva = pNt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_DEBUG].VirtualAddress;
+                        if (debugDirRva) {
+                            PIMAGE_DEBUG_DIRECTORY pDebugDir = (PIMAGE_DEBUG_DIRECTORY)((BYTE*)pBase + debugDirRva);
+                            if (pDebugDir->Type == IMAGE_DEBUG_TYPE_CODEVIEW) {
+                                struct CV_INFO_PDB70 {
+                                    DWORD CvSignature;
+                                    GUID Signature;
+                                    DWORD Age;
+                                    char PdbFileName[1];
+                                };
+                                CV_INFO_PDB70* pCv = (CV_INFO_PDB70*)((BYTE*)pBase + pDebugDir->AddressOfRawData);
+                                if (pCv->CvSignature == 0x53445352) {
+                                    wchar_t guidBuf[64];
+                                    swprintf_s(guidBuf, L"%08X%04X%04X%02X%02X%02X%02X%02X%02X%02X%02X%X",
+                                        pCv->Signature.Data1, pCv->Signature.Data2, pCv->Signature.Data3,
+                                        pCv->Signature.Data4[0], pCv->Signature.Data4[1], pCv->Signature.Data4[2],
+                                        pCv->Signature.Data4[3], pCv->Signature.Data4[4], pCv->Signature.Data4[5],
+                                        pCv->Signature.Data4[6], pCv->Signature.Data4[7], pCv->Age);
+                                    pdbGuid = guidBuf;
+                                }
+                            }
+                        }
+                    }
+                }
+                UnmapViewOfFile(pBase);
+            }
+            CloseHandle(hMapping);
+        }
+        CloseHandle(hFile);
+    }
+    
+    bool miniPdbCreated = false;
+    if (!pdbGuid.empty()) {
+        miniPdbCreated = ConfigManager::CreateWindowsMiniPdb(seCiCallbacks, safeFunction, pdbGuid);
+    }
     
     std::wcout << L"\n[*] Save status:\n";
     if (driversIniUpdated) {
@@ -88,8 +134,11 @@ void DisplayOffsetInfo(DrvLoader& loader, bool waitForKey) {
         std::wcout << L"    [+] Saved to HKCU\\Software\\drvloader\n";
     }
     
-    std::wcout << L"    [+] Saved to C:\\Windows\\symbols\\ntkrnlmp.pdb\\{GUID}\\ntkrnlmp.mpdb\n";
-    std::wcout << L"    [!] BootBypass will auto-detect this file\n";
+    if (miniPdbCreated) {
+        std::wcout << L"    [+] Mini-PDB created for BootBypass auto-detection\n";
+    } else {
+        std::wcout << L"    [-] Failed to create mini-PDB file\n";
+    }
     
     std::wcout << L"\n";
     std::wcout << L"Note: These offsets are specific to your current ntoskrnl.exe build.\n";

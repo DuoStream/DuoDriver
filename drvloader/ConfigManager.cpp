@@ -516,48 +516,63 @@ bool LoadOffsetsFromMiniPdb(const std::wstring& mpdbPath, uint64_t* outSeCi, uin
     return true;
 }
 
-bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction) {
+bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction, const std::wstring& pdbGuid) {
     std::wstring buildNumber = GetWindowsBuildNumber();
     
-    // Use the same GUID structure as SymbolDownloader
-    std::wstring pdbGuid = L"D6477C2EE3391555525A83E53C7895EB1";
-    std::wstring mpdbPath = L"C:\\Windows\\symbols\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
-    
-    std::wcout << L"[*] Creating Windows mini-PDB for build " << buildNumber << L"...\n";
-    
+    // Prepare mini-PDB structure
     MiniPdb mpdb = {};
     memcpy(mpdb.Magic, "MINIPDB", 8);
     mpdb.Version = 1;
     mpdb.SeCiCallbacks = seCiCallbacks;
     mpdb.ZwFlushInstructionCache = safeFunction;
     
-    // Create directory structure (C:\Windows\symbols\ntkrnlmp.pdb\GUID\)
-    std::wstring dirPath = L"C:\\Windows\\symbols\\ntkrnlmp.pdb\\" + pdbGuid;
-    SHCreateDirectoryExW(nullptr, dirPath.c_str(), nullptr);
+    std::wcout << L"[*] Creating Windows mini-PDB for build " << buildNumber << L"...\n";
     
-    HANDLE hFile = CreateFileW(mpdbPath.c_str(), GENERIC_WRITE, 0, nullptr, 
+    // Try primary location: C:\ProgramData\dbg\sym\ntkrnlmp.pdb\{GUID}\ntkrnlmp.mpdb
+    WCHAR progData[MAX_PATH];
+    if (SHGetFolderPathW(nullptr, CSIDL_COMMON_APPDATA, nullptr, 0, progData) == S_OK) {
+        std::wstring mpdbPath = std::wstring(progData) + L"\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
+        std::wstring dirPath = std::wstring(progData) + L"\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid;
+        
+        SHCreateDirectoryExW(nullptr, dirPath.c_str(), nullptr);
+        
+        HANDLE hFile = CreateFileW(mpdbPath.c_str(), GENERIC_WRITE, 0, nullptr, 
+                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) {
+            DWORD written;
+            bool success = WriteFile(hFile, &mpdb, sizeof(mpdb), &written, nullptr);
+            CloseHandle(hFile);
+            
+            if (success && written == sizeof(mpdb)) {
+                std::wcout << L"[+] Mini-PDB created: " << mpdbPath << L" (" << sizeof(mpdb) << L" bytes)\n";
+                std::wcout << L"    Build: " << buildNumber << L"\n";
+                std::wcout << L"    SeCiCallbacks: 0x" << std::hex << seCiCallbacks << std::dec << L"\n";
+                std::wcout << L"    SafeFunction: 0x" << std::hex << safeFunction << std::dec << L"\n";
+                return true;
+            }
+        }
+    }
+    
+    // Fallback location: C:\Windows\symbols\ntkrnlmp.pdb\{GUID}\ntkrnlmp.mpdb
+    std::wcout << L"[*] Trying fallback: C:\\Windows\\symbols\\...\n";
+    
+    WCHAR winDir[MAX_PATH];
+    GetWindowsDirectoryW(winDir, MAX_PATH);
+    
+    std::wstring fallbackPath = std::wstring(winDir) + L"\\symbols\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
+    std::wstring fallbackDir = std::wstring(winDir) + L"\\symbols\\ntkrnlmp.pdb\\" + pdbGuid;
+    
+    SHCreateDirectoryExW(nullptr, fallbackDir.c_str(), nullptr);
+    
+    HANDLE hFile = CreateFileW(fallbackPath.c_str(), GENERIC_WRITE, 0, nullptr, 
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) {
         DWORD error = GetLastError();
-        std::wcout << L"[-] Failed to create Windows mini-PDB (error: " << error << L")\n";
+        std::wcout << L"[-] Failed to create mini-PDB (error: " << error << L")\n";
         if (error == ERROR_ACCESS_DENIED) {
-            std::wcout << L"[-] Access denied - trying ProgramData fallback...\n";
-            
-            // Fallback to ProgramData
-            std::wstring fallbackPath = L"C:\\ProgramData\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
-            std::wstring fallbackDir = L"C:\\ProgramData\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid;
-            SHCreateDirectoryExW(nullptr, fallbackDir.c_str(), nullptr);
-            
-            hFile = CreateFileW(fallbackPath.c_str(), GENERIC_WRITE, 0, nullptr, 
-                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-            if (hFile == INVALID_HANDLE_VALUE) {
-                std::wcout << L"[-] Failed to create fallback mini-PDB\n";
-                return false;
-            }
-            mpdbPath = fallbackPath;
-        } else {
-            return false;
+            std::wcout << L"[-] Access denied - run as Administrator\n";
         }
+        return false;
     }
     
     DWORD written;
@@ -569,7 +584,7 @@ bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction) {
         return false;
     }
     
-    std::wcout << L"[+] Windows mini-PDB created: " << mpdbPath << L" (" << sizeof(mpdb) << L" bytes)\n";
+    std::wcout << L"[+] Mini-PDB created: " << fallbackPath << L" (" << sizeof(mpdb) << L" bytes)\n";
     std::wcout << L"    Build: " << buildNumber << L"\n";
     std::wcout << L"    SeCiCallbacks: 0x" << std::hex << seCiCallbacks << std::dec << L"\n";
     std::wcout << L"    SafeFunction: 0x" << std::hex << safeFunction << std::dec << L"\n";
@@ -577,47 +592,49 @@ bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction) {
     return true;
 }
 
-bool LoadOffsetsFromWindowsMiniPdb(uint64_t* outSeCi, uint64_t* outSafe) {
-    std::wstring pdbGuid = L"D6477C2EE3391555525A83E53C7895EB1";
-	// Try Windows directory first
-	std::wstring mpdbPath = L"C:\\Windows\\symbols\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
+bool LoadOffsetsFromWindowsMiniPdb(uint64_t* outSeCi, uint64_t* outSafe, const std::wstring& pdbGuid) {
+    WCHAR progData[MAX_PATH];
+    SHGetFolderPathW(nullptr, CSIDL_COMMON_APPDATA, nullptr, 0, progData);
+    
+    std::wstring mpdbPath = std::wstring(progData) + L"\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
 
-	HANDLE hFile = CreateFileW(mpdbPath.c_str(), GENERIC_READ, FILE_SHARE_READ, 
-							  nullptr, OPEN_EXISTING, 0, nullptr);
+    HANDLE hFile = CreateFileW(mpdbPath.c_str(), GENERIC_READ, FILE_SHARE_READ, 
+                              nullptr, OPEN_EXISTING, 0, nullptr);
 
-	// Fallback to ProgramData
-	if (hFile == INVALID_HANDLE_VALUE) {
-		mpdbPath = L"C:\\ProgramData\\dbg\\sym\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
-		hFile = CreateFileW(mpdbPath.c_str(), GENERIC_READ, FILE_SHARE_READ, 
-						   nullptr, OPEN_EXISTING, 0, nullptr);
-	}
+    if (hFile == INVALID_HANDLE_VALUE) {
+        WCHAR winDir[MAX_PATH];
+        GetWindowsDirectoryW(winDir, MAX_PATH);
+        
+        mpdbPath = std::wstring(winDir) + L"\\symbols\\ntkrnlmp.pdb\\" + pdbGuid + L"\\ntkrnlmp.mpdb";
+        hFile = CreateFileW(mpdbPath.c_str(), GENERIC_READ, FILE_SHARE_READ, 
+                           nullptr, OPEN_EXISTING, 0, nullptr);
+        
+        if (hFile == INVALID_HANDLE_VALUE) {
+            return false;
+        }
+    }
 
-	if (hFile == INVALID_HANDLE_VALUE) {
-		return false;
-	}
+    MiniPdb mpdb;
+    DWORD read;
+    bool success = ReadFile(hFile, &mpdb, sizeof(mpdb), &read, nullptr);
+    CloseHandle(hFile);
 
-	MiniPdb mpdb;
-	DWORD read;
-	bool success = ReadFile(hFile, &mpdb, sizeof(mpdb), &read, nullptr);
-	CloseHandle(hFile);
+    if (!success || read != sizeof(mpdb)) {
+        return false;
+    }
 
-	if (!success || read != sizeof(mpdb)) {
-		return false;
-	}
+    if (memcmp(mpdb.Magic, "MINIPDB", 8) != 0 || mpdb.Version != 1) {
+        return false;
+    }
 
-	// Verify magic and version
-	if (memcmp(mpdb.Magic, "MINIPDB", 8) != 0 || mpdb.Version != 1) {
-		return false;
-	}
+    *outSeCi = mpdb.SeCiCallbacks;
+    *outSafe = mpdb.ZwFlushInstructionCache;
 
-	*outSeCi = mpdb.SeCiCallbacks;
-	*outSafe = mpdb.ZwFlushInstructionCache;
+    std::wcout << L"[+] Loaded offsets from mini-PDB: " << mpdbPath << L"\n";
+    std::wcout << L"    SeCiCallbacks: 0x" << std::hex << *outSeCi << std::dec << L"\n";
+    std::wcout << L"    SafeFunction: 0x" << std::hex << *outSafe << std::dec << L"\n";
 
-	std::wcout << L"[+] Loaded offsets from Windows mini-PDB: " << mpdbPath << L"\n";
-	std::wcout << L"    SeCiCallbacks: 0x" << std::hex << *outSeCi << std::dec << L"\n";
-	std::wcout << L"    SafeFunction: 0x" << std::hex << *outSafe << std::dec << L"\n";
-
-	return true;
+    return true;
 }
 
 // ============================================================================

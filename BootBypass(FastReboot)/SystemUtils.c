@@ -40,6 +40,97 @@ int _wcsicmp_impl(const WCHAR* str1, const WCHAR* str2) {
     return 0;
 }
 
+// Bounded string length - returns length up to maxLen, never reads beyond
+SIZE_T wcsnlen_safe(const WCHAR* str, SIZE_T maxLen) {
+    if (!str) return 0;
+    
+    SIZE_T len = 0;
+    while (len < maxLen && str[len] != 0) {
+        len++;
+    }
+    return len;
+}
+
+// Safe string copy with size limit
+// Returns: length of src (what would be copied if buffer was infinite)
+// Result is always null-terminated if destSize > 0
+SIZE_T wcscpy_safe(WCHAR* dest, SIZE_T destSize, const WCHAR* src) {
+    if (!dest || destSize == 0) {
+        return src ? wcslen(src) : 0;
+    }
+    
+    if (!src) {
+        dest[0] = 0;
+        return 0;
+    }
+    
+    SIZE_T srcLen = wcslen(src);
+    SIZE_T copyLen = (srcLen < destSize - 1) ? srcLen : (destSize - 1);
+    
+    SIZE_T i;
+    for (i = 0; i < copyLen; i++) {
+        dest[i] = src[i];
+    }
+    dest[i] = 0;
+    
+    return srcLen; // Return full source length (may be > copyLen if truncated)
+}
+
+// Safe string concatenate with size limit
+// Returns: length of dest+src combined (what would be the result if buffer was infinite)
+// Result is always null-terminated if destSize > 0
+SIZE_T wcscat_safe(WCHAR* dest, SIZE_T destSize, const WCHAR* src) {
+    if (!dest || destSize == 0) {
+        return src ? wcslen(src) : 0;
+    }
+    
+    if (!src) {
+        return wcsnlen_safe(dest, destSize);
+    }
+    
+    // Use bounded length check in case dest is not properly terminated
+    SIZE_T destLen = wcsnlen_safe(dest, destSize);
+    SIZE_T srcLen = wcslen(src);
+    
+    // If dest already fills buffer, cannot append
+    if (destLen >= destSize - 1) {
+        return destLen + srcLen;
+    }
+    
+    SIZE_T remaining = destSize - destLen - 1;
+    SIZE_T copyLen = (srcLen < remaining) ? srcLen : remaining;
+    
+    SIZE_T i;
+    for (i = 0; i < copyLen; i++) {
+        dest[destLen + i] = src[i];
+    }
+    dest[destLen + i] = 0;
+    
+    return destLen + srcLen; // Return total length that would result
+}
+
+// Check if concatenation would fit without truncation
+BOOLEAN wcscat_check(WCHAR* dest, SIZE_T destSize, const WCHAR* src) {
+    if (!dest || !src || destSize == 0) return FALSE;
+    
+    SIZE_T destLen = wcsnlen_safe(dest, destSize);
+    SIZE_T srcLen = wcslen(src);
+    
+    // Check overflow protection: destLen + srcLen + 1 <= destSize
+    if (destLen >= destSize) return FALSE;
+    if (srcLen > (destSize - destLen - 1)) return FALSE;
+    
+    return TRUE;
+}
+
+// Validate if adding addLen to currentLen would exceed maxLen
+// Protected against arithmetic overflow
+BOOLEAN validate_string_space(SIZE_T currentLen, SIZE_T addLen, SIZE_T maxLen) {
+    if (currentLen >= maxLen) return FALSE;
+    if (addLen > (maxLen - currentLen - 1)) return FALSE;
+    return TRUE;
+}
+
 void TrimString(PWSTR str) {
     PWSTR start = str, end;
     while (*start == L' ' || *start == L'\t' || *start == L'\r' || *start == L'\n') start++;
@@ -193,15 +284,15 @@ ULONG ParseIniFile(PWSTR iniContent, PINI_ENTRY entries, ULONG maxEntries, PCONF
             inConfigSection = FALSE;
             if (currentEntry >= 0) {
                 if (entries[currentEntry].DisplayName[0] == 0 && entries[currentEntry].ServiceName[0]) {
-                    wcscpy(entries[currentEntry].DisplayName, entries[currentEntry].ServiceName);
+                    wcscpy_safe(entries[currentEntry].DisplayName, MAX_PATH_LEN, entries[currentEntry].ServiceName);
                 }
                 entryCount++;
             }
             if (entryCount < maxEntries) {
                 currentEntry = (LONG)entryCount;
                 memset_impl(&entries[currentEntry], 0, sizeof(INI_ENTRY));
-                wcscpy(entries[currentEntry].DriverType, L"KERNEL");
-                wcscpy(entries[currentEntry].StartType, L"DEMAND");
+                wcscpy_safe(entries[currentEntry].DriverType, 16, L"KERNEL");
+                wcscpy_safe(entries[currentEntry].StartType, 16, L"DEMAND");
             } else currentEntry = -1;
             continue;
         }
@@ -215,7 +306,7 @@ ULONG ParseIniFile(PWSTR iniContent, PINI_ENTRY entries, ULONG maxEntries, PCONF
                 TrimString(key); TrimString(value);
                 if (_wcsicmp_impl(key, L"Execute") == 0) config->Execute = (_wcsicmp_impl(value, L"YES") == 0 || _wcsicmp_impl(value, L"1") == 0);
                 else if (_wcsicmp_impl(key, L"RestoreHVCI") == 0) config->RestoreHVCI = (_wcsicmp_impl(value, L"YES") == 0 || _wcsicmp_impl(value, L"1") == 0);
-                else if (_wcsicmp_impl(key, L"DriverDevice") == 0) wcscpy(config->DriverDevice, value);
+                else if (_wcsicmp_impl(key, L"DriverDevice") == 0) wcscpy_safe(config->DriverDevice, MAX_PATH_LEN, value);
                 else if (_wcsicmp_impl(key, L"IoControlCode_Read") == 0) StringToULONG(value, &config->IoControlCode_Read);
                 else if (_wcsicmp_impl(key, L"IoControlCode_Write") == 0) StringToULONG(value, &config->IoControlCode_Write);
                 else if (_wcsicmp_impl(key, L"Offset_SeCiCallbacks") == 0) StringToULONGLONG(value, &config->Offset_SeCiCallbacks);
@@ -238,24 +329,24 @@ ULONG ParseIniFile(PWSTR iniContent, PINI_ENTRY entries, ULONG maxEntries, PCONF
                     else if (_wcsicmp_impl(value, L"RENAME") == 0) entries[currentEntry].Action = ACTION_RENAME;
                     else if (_wcsicmp_impl(value, L"DELETE") == 0) entries[currentEntry].Action = ACTION_DELETE;
                 }
-                else if (_wcsicmp_impl(key, L"ServiceName") == 0) wcscpy(entries[currentEntry].ServiceName, value);
-                else if (_wcsicmp_impl(key, L"DisplayName") == 0) wcscpy(entries[currentEntry].DisplayName, value);
-                else if (_wcsicmp_impl(key, L"ImagePath") == 0) wcscpy(entries[currentEntry].ImagePath, value);
-                else if (_wcsicmp_impl(key, L"Type") == 0) wcscpy(entries[currentEntry].DriverType, value);
-                else if (_wcsicmp_impl(key, L"StartType") == 0) wcscpy(entries[currentEntry].StartType, value);
+                else if (_wcsicmp_impl(key, L"ServiceName") == 0) wcscpy_safe(entries[currentEntry].ServiceName, MAX_PATH_LEN, value);
+                else if (_wcsicmp_impl(key, L"DisplayName") == 0) wcscpy_safe(entries[currentEntry].DisplayName, MAX_PATH_LEN, value);
+                else if (_wcsicmp_impl(key, L"ImagePath") == 0) wcscpy_safe(entries[currentEntry].ImagePath, MAX_PATH_LEN, value);
+                else if (_wcsicmp_impl(key, L"Type") == 0) wcscpy_safe(entries[currentEntry].DriverType, 16, value);
+                else if (_wcsicmp_impl(key, L"StartType") == 0) wcscpy_safe(entries[currentEntry].StartType, 16, value);
                 else if (_wcsicmp_impl(key, L"CheckIfLoaded") == 0) entries[currentEntry].CheckIfLoaded = (_wcsicmp_impl(value, L"YES") == 0);
                 else if (_wcsicmp_impl(key, L"AutoPatch") == 0) entries[currentEntry].AutoPatch = (_wcsicmp_impl(value, L"YES") == 0 || _wcsicmp_impl(value, L"1") == 0);
-                else if (_wcsicmp_impl(key, L"SourcePath") == 0) wcscpy(entries[currentEntry].SourcePath, value);
-                else if (_wcsicmp_impl(key, L"TargetPath") == 0) wcscpy(entries[currentEntry].TargetPath, value);
+                else if (_wcsicmp_impl(key, L"SourcePath") == 0) wcscpy_safe(entries[currentEntry].SourcePath, MAX_PATH_LEN, value);
+                else if (_wcsicmp_impl(key, L"TargetPath") == 0) wcscpy_safe(entries[currentEntry].TargetPath, MAX_PATH_LEN, value);
                 else if (_wcsicmp_impl(key, L"ReplaceIfExists") == 0) entries[currentEntry].ReplaceIfExists = (_wcsicmp_impl(value, L"YES") == 0);
-                else if (_wcsicmp_impl(key, L"DeletePath") == 0) wcscpy(entries[currentEntry].DeletePath, value);
+                else if (_wcsicmp_impl(key, L"DeletePath") == 0) wcscpy_safe(entries[currentEntry].DeletePath, MAX_PATH_LEN, value);
                 else if (_wcsicmp_impl(key, L"RecursiveDelete") == 0) entries[currentEntry].RecursiveDelete = (_wcsicmp_impl(value, L"YES") == 0);
             }
         }
     }
     if (currentEntry >= 0) {
         if (entries[currentEntry].DisplayName[0] == 0 && entries[currentEntry].ServiceName[0]) {
-            wcscpy(entries[currentEntry].DisplayName, entries[currentEntry].ServiceName);
+            wcscpy_safe(entries[currentEntry].DisplayName, MAX_PATH_LEN, entries[currentEntry].ServiceName);
         }
         entryCount++;
     }

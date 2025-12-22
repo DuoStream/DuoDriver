@@ -89,14 +89,17 @@ BOOLEAN ReadMemory64(HANDLE hDriver, ULONGLONG address, ULONGLONG* value, ULONG 
 // ============================================================================
 
 ULONGLONG GetNtoskrnlBase(void) {
-    UCHAR stackBuffer[0x10000];
+    // Use static buffer instead of stack allocation
+    static UCHAR moduleBuffer[0x10000];
     ULONG returnLength;
 
-    NTSTATUS status = NtQuerySystemInformation(11, stackBuffer, sizeof(stackBuffer), &returnLength);
+    memset_impl(moduleBuffer, 0, sizeof(moduleBuffer));
+    
+    NTSTATUS status = NtQuerySystemInformation(11, moduleBuffer, sizeof(moduleBuffer), &returnLength);
     if (!NT_SUCCESS(status))
         return 0;
 
-    SYSTEM_MODULE_INFORMATION* moduleInfo = (SYSTEM_MODULE_INFORMATION*)stackBuffer;
+    SYSTEM_MODULE_INFORMATION* moduleInfo = (SYSTEM_MODULE_INFORMATION*)moduleBuffer;
     if (moduleInfo->Count == 0)
         return 0;
 
@@ -257,13 +260,18 @@ BOOLEAN SaveStateSection(ULONGLONG callback) {
     LARGE_INTEGER byteOffset;
 
     WCHAR content[512];
-    wcscpy(content, L"\r\n[DSE_STATE]\r\n");
-    wcscat(content, L"OriginalCallback=");
+    SIZE_T len = wcscpy_safe(content, 512, L"\r\n[DSE_STATE]\r\n");
+    len = wcscat_safe(content, 512, L"OriginalCallback=");
 
     WCHAR hexValue[32];
     ULONGLONGToHexString(callback, hexValue, TRUE);
-    wcscat(content, hexValue);
-    wcscat(content, L"\r\n");
+    len = wcscat_safe(content, 512, hexValue);
+    len = wcscat_safe(content, 512, L"\r\n");
+    
+    if (len >= 512) {
+        DisplayMessage(L"FAILED: State content too long\r\n");
+        return FALSE;
+    }
 
     RtlInitUnicodeString(&usFilePath, STATE_FILE_PATH);
     InitializeObjectAttributes(&oa, &usFilePath, OBJ_CASE_INSENSITIVE, NULL, NULL);
@@ -416,7 +424,7 @@ BOOLEAN RemoveStateSection(void) {
             line++;
 
         WCHAR trimmedBuf[MAX_PATH_LEN];
-        wcscpy(trimmedBuf, lineBuf);
+        wcscpy_safe(trimmedBuf, MAX_PATH_LEN, lineBuf);
         TrimString(trimmedBuf);
 
         BOOLEAN isSeparator = FALSE;
@@ -448,12 +456,21 @@ BOOLEAN RemoveStateSection(void) {
             continue;
         }
 
+        // Safe concatenation with overflow check
         if (newLen > 0) {
-            wcscat(newContent, L"\r\n");
+            if (!wcscat_check(newContent, 8192, L"\r\n")) {
+                DisplayMessage(L"WARNING: Output buffer full during state removal\r\n");
+                break;
+            }
+            wcscat_safe(newContent, 8192, L"\r\n");
             newLen = wcslen(newContent);
         }
 
-        wcscat(newContent, lineBuf);
+        if (!wcscat_check(newContent, 8192, lineBuf)) {
+            DisplayMessage(L"WARNING: Output buffer full during state removal\r\n");
+            break;
+        }
+        wcscat_safe(newContent, 8192, lineBuf);
         newLen = wcslen(newContent);
     }
 

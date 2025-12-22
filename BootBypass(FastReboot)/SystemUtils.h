@@ -16,6 +16,20 @@ SIZE_T wcslen(const WCHAR* str);
 WCHAR* wcscpy(WCHAR* dest, const WCHAR* src);
 WCHAR* wcscat(WCHAR* dest, const WCHAR* src);
 int _wcsicmp_impl(const WCHAR* str1, const WCHAR* str2);
+// Safe string operations with bounds checking
+// All size parameters are in WCHAR count (not bytes)
+// Returns: actual length of result string (not including null terminator)
+// If truncation occurs, returns what WOULD be the full length (like strlcpy/strlcat)
+SIZE_T wcscpy_safe(WCHAR* dest, SIZE_T destSize, const WCHAR* src);
+SIZE_T wcscat_safe(WCHAR* dest, SIZE_T destSize, const WCHAR* src);
+// Check if concatenation would fit without truncation
+BOOLEAN wcscat_check(WCHAR* dest, SIZE_T destSize, const WCHAR* src);
+
+// Bounded string length - never reads beyond maxLen characters
+SIZE_T wcsnlen_safe(const WCHAR* str, SIZE_T maxLen);
+
+// Validate if adding addLen to currentLen would exceed maxLen (with overflow protection)
+BOOLEAN validate_string_space(SIZE_T currentLen, SIZE_T addLen, SIZE_T maxLen);
 void TrimString(PWSTR str);
 BOOLEAN StringToULONGLONG(PCWSTR str, ULONGLONG* out);
 BOOLEAN StringToULONG(PCWSTR str, PULONG out);

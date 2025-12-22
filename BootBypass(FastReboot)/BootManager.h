@@ -6,5 +6,6 @@
 #include "DriverManager.h"
 #include "SecurityPatcher.h"
 #include "FileManager.h"
+#include "SetupManager.h"
 
 #endif

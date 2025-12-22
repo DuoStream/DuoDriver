@@ -39,10 +39,10 @@ namespace ConfigManager {
     bool LoadOffsetsFromMiniPdb(const std::wstring& mpdbPath, uint64_t* outSeCi, uint64_t* outSafe);
     
     // Creates mini-PDB in Windows symbols directory with proper GUID structure
-    bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction);
+    bool CreateWindowsMiniPdb(uint64_t seCiCallbacks, uint64_t safeFunction, const std::wstring& pdbGuid);
     
     // Loads offsets from Windows mini-PDB (automatic location detection)
-    bool LoadOffsetsFromWindowsMiniPdb(uint64_t* outSeCi, uint64_t* outSafe);
+    bool LoadOffsetsFromWindowsMiniPdb(uint64_t* outSeCi, uint64_t* outSafe, const std::wstring& pdbGuid);
     
     // Gets Windows build number from ntoskrnl.exe version info
     std::wstring GetWindowsBuildNumber();

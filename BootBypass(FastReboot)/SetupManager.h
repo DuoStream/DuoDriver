@@ -4,6 +4,7 @@
 #include "BootBypass.h"
 #include "SystemUtils.h"
 
+NTSTATUS SetHVCIRegistryFlag(BOOLEAN enable);
 BOOLEAN ExtractOmniDriverFromResource(void);
 NTSTATUS CleanupOmniDriver(void);
 BOOLEAN CheckAndDisableHVCI(void);

@@ -5,8 +5,17 @@ BOOLEAN IsDriverLoaded(PCWSTR serviceName) {
     UNICODE_STRING usServiceName;
     NTSTATUS status;
 
-    wcscpy(fullServicePath, L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
-    wcscat(fullServicePath, serviceName);
+    // Safe path construction with overflow check
+    SIZE_T baseLen = wcscpy_safe(fullServicePath, MAX_PATH_LEN, 
+                                  L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
+    if (baseLen >= MAX_PATH_LEN - 1) return FALSE;
+    
+    SIZE_T finalLen = wcscat_safe(fullServicePath, MAX_PATH_LEN, serviceName);
+    if (finalLen >= MAX_PATH_LEN) {
+        // Truncation occurred - path invalid
+        return FALSE;
+    }
+    
     RtlInitUnicodeString(&usServiceName, fullServicePath);
     
     status = NtLoadDriver(&usServiceName);
@@ -29,27 +38,46 @@ NTSTATUS CreateDriverRegistryEntry(PCWSTR serviceName, PCWSTR imagePath, PCWSTR 
     WCHAR tempBuffer[MAX_PATH_LEN];
     ULONG dataSize;
 
-    wcscpy(fullServicePath, L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
-    wcscat(fullServicePath, serviceName);
+    // Safe path construction
+    SIZE_T baseLen = wcscpy_safe(fullServicePath, MAX_PATH_LEN, 
+                                  L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
+    if (baseLen >= MAX_PATH_LEN - 1) return STATUS_OBJECT_NAME_INVALID;
+    
+    SIZE_T finalLen = wcscat_safe(fullServicePath, MAX_PATH_LEN, serviceName);
+    if (finalLen >= MAX_PATH_LEN) return STATUS_OBJECT_NAME_INVALID;
+    
     RtlInitUnicodeString(&usServiceName, fullServicePath);
     InitializeObjectAttributes(&oa, &usServiceName, OBJ_CASE_INSENSITIVE, NULL, NULL);
 
     status = NtCreateKey(&hKey, KEY_ALL_ACCESS, &oa, 0, NULL, REG_OPTION_NON_VOLATILE, &disposition);
     if (!NT_SUCCESS(status)) return status;
 
+    // ImagePath value
     RtlInitUnicodeString(&usValueName, L"ImagePath");
-    wcscpy(tempBuffer, imagePath);
-    dataSize = (ULONG)((wcslen(tempBuffer) + 1) * sizeof(WCHAR));
+    SIZE_T pathLen = wcscpy_safe(tempBuffer, MAX_PATH_LEN, imagePath);
+    if (pathLen >= MAX_PATH_LEN) {
+        NtClose(hKey);
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+    dataSize = (ULONG)((pathLen + 1) * sizeof(WCHAR));
     status = NtSetValueKey(hKey, &usValueName, 0, REG_EXPAND_SZ, tempBuffer, dataSize);
 
+    // DisplayName value
     RtlInitUnicodeString(&usValueName, L"DisplayName");
-    dataSize = (ULONG)((wcslen(serviceName) + 1) * sizeof(WCHAR));
+    SIZE_T nameLen = wcslen(serviceName);
+    if (nameLen >= MAX_PATH_LEN) {
+        NtClose(hKey);
+        return STATUS_OBJECT_NAME_INVALID;
+    }
+    dataSize = (ULONG)((nameLen + 1) * sizeof(WCHAR));
     NtSetValueKey(hKey, &usValueName, 0, REG_SZ, (PVOID)serviceName, dataSize);
 
+    // Type value
     dwValue = (_wcsicmp_impl(driverType, L"FILE_SYSTEM") == 0) ? 2 : 1;
     RtlInitUnicodeString(&usValueName, L"Type");
     NtSetValueKey(hKey, &usValueName, 0, REG_DWORD, &dwValue, sizeof(DWORD));
 
+    // Start value
     if (_wcsicmp_impl(startType, L"BOOT") == 0) dwValue = 0;
     else if (_wcsicmp_impl(startType, L"SYSTEM") == 0) dwValue = 1;
     else if (_wcsicmp_impl(startType, L"AUTO") == 0) dwValue = 2;
@@ -59,6 +87,7 @@ NTSTATUS CreateDriverRegistryEntry(PCWSTR serviceName, PCWSTR imagePath, PCWSTR 
     RtlInitUnicodeString(&usValueName, L"Start");
     NtSetValueKey(hKey, &usValueName, 0, REG_DWORD, &dwValue, sizeof(DWORD));
 
+    // ErrorControl value
     dwValue = 1;
     RtlInitUnicodeString(&usValueName, L"ErrorControl");
     NtSetValueKey(hKey, &usValueName, 0, REG_DWORD, &dwValue, sizeof(DWORD));
@@ -75,8 +104,14 @@ NTSTATUS LoadDriver(PCWSTR serviceName, PCWSTR imagePath, PCWSTR driverType, PCW
     status = CreateDriverRegistryEntry(serviceName, imagePath, driverType, startType);
     if (!NT_SUCCESS(status) && status != STATUS_OBJECT_NAME_COLLISION) return status;
 
-    wcscpy(fullServicePath, L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
-    wcscat(fullServicePath, serviceName);
+    // Safe path construction
+    SIZE_T baseLen = wcscpy_safe(fullServicePath, MAX_PATH_LEN, 
+                                  L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
+    if (baseLen >= MAX_PATH_LEN - 1) return STATUS_OBJECT_NAME_INVALID;
+    
+    SIZE_T finalLen = wcscat_safe(fullServicePath, MAX_PATH_LEN, serviceName);
+    if (finalLen >= MAX_PATH_LEN) return STATUS_OBJECT_NAME_INVALID;
+    
     RtlInitUnicodeString(&usServiceName, fullServicePath);
     return NtLoadDriver(&usServiceName);
 }
@@ -84,8 +119,15 @@ NTSTATUS LoadDriver(PCWSTR serviceName, PCWSTR imagePath, PCWSTR driverType, PCW
 NTSTATUS UnloadDriver(PCWSTR serviceName) {
     WCHAR fullServicePath[MAX_PATH_LEN];
     UNICODE_STRING usServiceName;
-    wcscpy(fullServicePath, L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
-    wcscat(fullServicePath, serviceName);
+    
+    // Safe path construction
+    SIZE_T baseLen = wcscpy_safe(fullServicePath, MAX_PATH_LEN, 
+                                  L"\\Registry\\Machine\\System\\CurrentControlSet\\Services\\");
+    if (baseLen >= MAX_PATH_LEN - 1) return STATUS_OBJECT_NAME_INVALID;
+    
+    SIZE_T finalLen = wcscat_safe(fullServicePath, MAX_PATH_LEN, serviceName);
+    if (finalLen >= MAX_PATH_LEN) return STATUS_OBJECT_NAME_INVALID;
+    
     RtlInitUnicodeString(&usServiceName, fullServicePath);
     return NtUnloadDriver(&usServiceName);
 }

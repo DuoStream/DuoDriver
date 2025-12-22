@@ -18,9 +18,6 @@ private:
     std::wstring symbolCachePath;
     std::wstring symbolServer;
     
-    // Extracts PDB name and GUID from PE file debug directory
-    std::pair<std::wstring, std::wstring> GetPdbInfoFromPe(const std::wstring& pePath);
-    
     // Ensures symbol cache directory exists
     bool EnsureSymbolCache();
     
@@ -41,6 +38,9 @@ public:
     
     // Downloads symbols for specified module if not cached
     bool DownloadSymbolsForModule(const std::wstring& modulePath);
+    
+    // Extracts PDB name and GUID from PE file debug directory
+    std::pair<std::wstring, std::wstring> GetPdbInfoFromPe(const std::wstring& pePath);
     
     std::wstring GetSymbolCachePath() const { return symbolCachePath; }
 };

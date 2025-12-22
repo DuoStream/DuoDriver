@@ -97,13 +97,17 @@ bool DrvLoader::GetSymbolOffsets(uint64_t* seCiCallbacks, uint64_t* safeFunction
     GetSystemDirectoryW(systemRoot, MAX_PATH);
     std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
     
-    // Check cache first
-    if (ConfigManager::LoadOffsetsFromWindowsMiniPdb(seCiCallbacks, safeFunction)) {
-        std::wcout << L"[+] Using cached offsets from mini-PDB\n";
+    auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
+    if (pdbGuid.empty()) {
+        std::wcout << L"[-] Failed to extract PDB GUID from kernel\n";
+        return false;
+    }
+    
+    if (ConfigManager::LoadOffsetsFromWindowsMiniPdb(seCiCallbacks, safeFunction, pdbGuid)) {
+        std::wcout << L"[+] Using cached offsets for GUID: " << pdbGuid << L"\n";
         return true;
     }
     
-    // Download symbols if necessary
     std::wcout << L"[*] Downloading kernel symbols...\n";
     if (!symbolDownloader.DownloadSymbolsForModule(ntoskrnlPath)) {
         std::wcout << L"[-] Failed to download symbols for ntoskrnl.exe\n";
@@ -121,8 +125,7 @@ bool DrvLoader::GetSymbolOffsets(uint64_t* seCiCallbacks, uint64_t* safeFunction
     *seCiCallbacks = *seCiOffset;
     *safeFunction = *zwFlushOffset;
     
-    // Cache results
-    ConfigManager::CreateWindowsMiniPdb(*seCiCallbacks, *safeFunction);
+    ConfigManager::CreateWindowsMiniPdb(*seCiCallbacks, *safeFunction, pdbGuid);
     
     return true;
 }
@@ -191,21 +194,37 @@ bool DrvLoader::InstallAndStartDriver() {
 }
 
 bool DrvLoader::TryLoadOffsetsFromCache(uint64_t* seCiCallbacks, uint64_t* safeFunction) {
-    return ConfigManager::LoadOffsetsFromWindowsMiniPdb(seCiCallbacks, safeFunction);
+    WCHAR systemRoot[MAX_PATH];
+    GetSystemDirectoryW(systemRoot, MAX_PATH);
+    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
+    
+    auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
+    if (pdbGuid.empty()) {
+        return false;
+    }
+    
+    return ConfigManager::LoadOffsetsFromWindowsMiniPdb(seCiCallbacks, safeFunction, pdbGuid);
 }
 
 bool DrvLoader::CheckDSEStatus(bool& isPatched) {
     std::wcout << L"\n[=== Checking DSE Status ===]\n\n";
     
+    WCHAR systemRoot[MAX_PATH];
+    GetSystemDirectoryW(systemRoot, MAX_PATH);
+    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
+    
+    auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
+    if (pdbGuid.empty()) {
+        std::wcout << L"[-] Failed to extract PDB GUID from kernel\n";
+        return false;
+    }
+    
     uint64_t seCiCallbacksOffset = 0;
     uint64_t zwFlushOffset = 0;
-    bool usedCache = TryLoadOffsetsFromCache(&seCiCallbacksOffset, &zwFlushOffset);
+    bool usedCache = ConfigManager::LoadOffsetsFromWindowsMiniPdb(&seCiCallbacksOffset, &zwFlushOffset, pdbGuid);
     
     if (!usedCache) {
         std::wcout << L"[*] Downloading symbols...\n";
-        WCHAR systemRoot[MAX_PATH];
-        GetSystemDirectoryW(systemRoot, MAX_PATH);
-        std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
         
         if (!symbolDownloader.DownloadSymbolsForModule(ntoskrnlPath)) return false;
         
@@ -216,7 +235,7 @@ bool DrvLoader::CheckDSEStatus(bool& isPatched) {
         
         seCiCallbacksOffset = *seCiOpt;
         zwFlushOffset = *zwOpt;
-        ConfigManager::CreateWindowsMiniPdb(seCiCallbacksOffset, zwFlushOffset);
+        ConfigManager::CreateWindowsMiniPdb(seCiCallbacksOffset, zwFlushOffset, pdbGuid);
     }
     
     if (!InstallAndStartDriver()) return false;
@@ -251,7 +270,6 @@ bool DrvLoader::CheckDSEStatus(bool& isPatched) {
     
     if (!usedCache) {
         ConfigManager::UpdateDriversIni(seCiCallbacksOffset, zwFlushOffset);
-        // Build info logic retained but condensed
         std::wstring buildInfo = ConfigManager::GetWindowsBuildNumber();
         ConfigManager::SaveOffsetsToRegistry(seCiCallbacksOffset, zwFlushOffset, buildInfo);
     }
@@ -262,15 +280,25 @@ bool DrvLoader::CheckDSEStatus(bool& isPatched) {
 }
 
 bool DrvLoader::BypassDSEInternal() {
+    WCHAR systemRoot[MAX_PATH];
+    GetSystemDirectoryW(systemRoot, MAX_PATH);
+    std::wstring ntoskrnlPath = std::wstring(systemRoot) + L"\\ntoskrnl.exe";
+    
+    auto [pdbName, pdbGuid] = symbolDownloader.GetPdbInfoFromPe(ntoskrnlPath);
+    if (pdbGuid.empty()) {
+        std::wcout << L"[-] Failed to extract PDB GUID from kernel\n";
+        return false;
+    }
+    
     uint64_t seCiOffset = 0, zwFlushOffset = 0;
     
-    if (!TryLoadOffsetsFromCache(&seCiOffset, &zwFlushOffset)) {
+    if (!ConfigManager::LoadOffsetsFromWindowsMiniPdb(&seCiOffset, &zwFlushOffset, pdbGuid)) {
         auto seCiOpt = GetKernelSymbolOffset(L"SeCiCallbacks");
         auto zwOpt = GetKernelSymbolOffset(L"ZwFlushInstructionCache");
         if (!seCiOpt || !zwOpt) return false;
         seCiOffset = *seCiOpt;
         zwFlushOffset = *zwOpt;
-        ConfigManager::CreateWindowsMiniPdb(seCiOffset, zwFlushOffset);
+        ConfigManager::CreateWindowsMiniPdb(seCiOffset, zwFlushOffset, pdbGuid);
     }
     
     auto ntBase = GetNtoskrnlBase();
