@@ -1,5 +1,35 @@
 # KernelResearchKit - Windows DSE Bypass Framework
 
+> ### 🚀 Update: 09.04.2026 — BootBypass becomes an independent project
+>
+> **`bb.exe` has been extracted into a standalone project with full documentation, clean deployment tooling, and a solid technical write-up.**
+>
+> #### What changed
+>
+> The boot-phase component previously embedded in this kit (`BootBypass.exe`) has matured into a fully independent utility — **[BootBypass](https://github.com/wesmar/BootBypass)**. It ships as a single 60 KB native binary (`bb.exe`) with zero external dependencies: no PDB files, no symbol server, no helper processes. The kernel offset scanner (`OffsetFinder`) reads `ntoskrnl.exe` directly from disk at boot time and resolves `SeCiCallbacks` and `ZwFlushInstructionCache` automatically — making the tool self-contained across Windows builds.
+>
+> Supported platforms: **Windows 10 and Windows 11** (x64). The HVCI hive patcher handles the structural differences between both generations — Windows 11 stores NK and VK cells close together; Windows 10 scatters them across the hive file, requiring a chunked random-access scan to locate the `Enabled` value regardless of its file offset.
+>
+> #### Download
+>
+> | | |
+> |---|---|
+> | **Repository** | https://github.com/wesmar/BootBypass |
+> | **Release archive** | https://github.com/wesmar/BootBypass/releases/download/latest/BootBypass.7z |
+> | **Password** | `github.com` |
+>
+> #### Boot-phase timing and driver dependencies
+>
+> `bb.exe` executes at the SMSS phase — before `services.exe`, before `winlogon.exe`, before any user-mode service initializes. This is ideal for drivers that are self-contained at the kernel level (hardware interfaces, filter drivers, research drivers with no service dependencies).
+>
+> However, drivers that depend on services initialized later in the boot sequence **cannot** be loaded at this phase without causing a BSOD. A concrete example is a keyboard filter driver that also opens a WSK (Windows Socket Kernel) network connection — as in [kvckbd](https://github.com/wesmar/KernelResearchKit). At SMSS phase the network stack (`NDIS`, `tcpip.sys`) may be present as boot-start drivers, but the WSK provider dispatch table and associated infrastructure are not yet fully registered. Attempting to initialize a WSK client at this point results in a kernel-mode crash. Such drivers must be loaded after the service initialization wave — at or after the `winlogon`/`themes` phase, when the full service dependency chain has completed.
+>
+> For those scenarios, `drvloader.exe` (this kit) remains the appropriate tool. `bb.exe` targets the early phase; `drvloader` targets the runtime.
+>
+> #### Project status
+>
+> Further development of KernelResearchKit is paused pending a larger architectural revision. Active research and all significant updates go into the flagship project — **[kvc](https://github.com/wesmar/kvc)** — which is maintained on a regular basis.
+
 > ### 🚀 Update: 22.12.2025 - Code Sanitization & PDB Version Resilience
 > **Low-level code sanitization implemented in BootBypass(FastReboot).**
 > 
