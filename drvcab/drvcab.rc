@@ -1,0 +1,32 @@
+#include "resource.h"
+#include <windows.h>
+
+IDR_KVC_ICON RCDATA "kvc.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEFLAGSMASK   0x3fL
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_APP
+FILESUBTYPE     0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Black-Seraph"
+            VALUE "FileDescription", "Driver Packing / Encryption Tool"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "drvcab.exe"
+            VALUE "LegalCopyright", "Copyright © Black-Seraph 2026"
+            VALUE "OriginalFilename", "drvcab.exe"
+            VALUE "ProductName", "Driver Cabinet Tool"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

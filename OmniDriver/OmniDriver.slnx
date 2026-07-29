@@ -1,9 +1,0 @@
-<Solution>
-  <Configurations>
-    <BuildType Name="Release" />
-    <Platform Name="x64" />
-  </Configurations>
-  <Project Path="OmniDriver.vcxproj">
-    <Deploy />
-  </Project>
-</Solution>
